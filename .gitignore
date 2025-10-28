@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+
+# Environment variables (DO NOT commit this)
+.env
+
+# Database files
+*.db
+transactions.db
+
+# Large media/binary files
+*.zip
+*.mp4
+db.zip
+videoplayback.mp4
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+.DS_Store

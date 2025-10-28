@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamBot - AI Streaming Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 450px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .main-container {
+            max-width: 1400px;
+            width: 100%;
+        }
+
+        .main-card {
+            height: 90vh;
+            max-height: 800px;
+            display: flex;
+            flex-direction: column;
+            padding: 30px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo h1 {
+            color: #667eea;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .logo p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .security-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 5px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-confirm {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            padding: 10px 20px;
+            margin-top: 10px;
+        }
+
+        .toggle-text {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .toggle-text a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            border-left: 4px solid #c33;
+        }
+
+        .success {
+            background: #efe;
+            color: #3c3;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            border-left: 4px solid #3c3;
+        }
+
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 20px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 18px;
+        }
+
+        .user-details h3 {
+            font-size: 16px;
+            color: #333;
+        }
+
+        .user-details p {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .btn-logout {
+            padding: 8px 16px;
+            background: #ff4757;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #e84118;
+        }
+
+        .search-section {
+            margin-bottom: 20px;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn-search {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn-search:hover {
+            transform: scale(1.05);
+        }
+
+        .btn-search:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            border: none;
+            background: #f0f0f0;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            font-size: 13px;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .results-area {
+            flex: 1;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .placeholder-message {
+            text-align: center;
+            color: #999;
+            padding: 40px 20px;
+        }
+
+        .placeholder-message h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 20px;
+        }
+
+        .content-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            transition: all 0.3s;
+        }
+
+        .content-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .content-title {
+            font-size: 1.3rem;
+            color: #333;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .provider-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 12px 15px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .provider-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+
+        .provider-name {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .rank-badge {
+            background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+            color: #333;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .similarity-score {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .intent-display {
+            background: white;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+        }
+
+        .intent-display h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 15px;
+        }
+
+        .intent-display pre {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .intent-item {
+            display: inline-block;
+            background: #f8f9fa;
+            padding: 6px 12px;
+            margin: 4px;
+            border-radius: 15px;
+            font-size: 13px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .video-player-page {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .video-header {
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px 30px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .btn-back {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-back:hover {
+            background: #764ba2;
+        }
+
+        .video-info {
+            flex: 1;
+            color: white;
+        }
+
+        .video-info h2 {
+            font-size: 20px;
+            margin-bottom: 5px;
+        }
+
+        .video-info p {
+            font-size: 14px;
+            color: #aaa;
+        }
+
+        .video-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .video-wrapper {
+            width: 100%;
+            max-width: 1200px;
+            aspect-ratio: 16/9;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .results-area::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .results-area::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .results-area::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .main-card {
+                padding: 20px;
+            }
+            .tabs {
+                flex-wrap: wrap;
+            }
+            .tab {
+                font-size: 12px;
+                padding: 8px 15px;
+            }
+            .video-header {
+                padding: 10px 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Form -->
+    <div id="loginForm" class="container">
+        <div class="card">
+            <div class="logo">
+                <h1>🎬 StreamBot</h1>
+                <p>Your AI-Powered Content Discovery Assistant</p>
+            </div>
+            <div id="loginError" class="error hidden"></div>
+            <form id="loginFormElement" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="loginEmail">Email</label>
+                    <input type="email" id="loginEmail" required placeholder="Enter your email">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" required placeholder="Enter your password">
+                </div>
+                <button type="submit" class="btn" id="loginBtn">Login</button>
+            </form>
+            <div class="toggle-text">
+                Don't have an account? <a onclick="showRegisterForm()">Register here</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Register Form -->
+    <div id="registerForm" class="container hidden">
+        <div class="card">
+            <div class="logo">
+                <h1>🎬 StreamBot</h1>
+                <p>Create Your Account</p>
+                <div class="security-badge">End-to-End Encryption</div>
+            </div>
+            <div id="registerError" class="error hidden"></div>
+            <div id="registerSuccess" class="success hidden"></div>
+            <form id="registerFormElement" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="registerName">Full Name</label>
+                    <input type="text" id="registerName" required placeholder="Enter your full name">
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email</label>
+                    <input type="email" id="registerEmail" required placeholder="Enter your email">
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Password</label>
+                    <input type="password" id="registerPassword" required placeholder="Create a password (min 6 characters)" minlength="6">
+                </div>
+                <button type="submit" class="btn" id="registerBtn">Register</button>
+            </form>
+            <div class="toggle-text">
+                Already have an account? <a onclick="showLoginForm()">Login here</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application -->
+    <div id="mainApp" class="main-container hidden">
+        <div class="card main-card">
+            <div class="header-bar">
+                <div class="user-info">
+                    <div class="user-avatar" id="userAvatar">U</div>
+                    <div class="user-details">
+                        <h3 id="userName">User</h3>
+                        <p id="userEmail">user@example.com</p>
+                    </div>
+                </div>
+                <button class="btn-logout" onclick="handleLogout()">Logout</button>
+            </div>
+            <div class="search-section">
+                <div class="search-box">
+                    <input 
+                        type="text" 
+                        class="search-input" 
+                        id="searchInput" 
+                        placeholder="E.g., 'I want to watch Inception in high quality with low latency'"
+                        onkeypress="handleKeyPress(event)"
+                    >
+                    <button class="btn-search" id="searchBtn" onclick="handleSearch()">Search</button>
+                </div>
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab(event, 'smart')">🎯 Smart Search</button>
+                    <button class="tab" onclick="switchTab(event, 'providers')">📋 Providers</button>
+                    <button class="tab" onclick="switchTab(event, 'intents')">🧠 Intents</button>
+                </div>
+            </div>
+            <div class="results-area" id="resultsArea">
+                <div class="placeholder-message">
+                    <h3>Welcome to StreamBot!</h3>
+                    <p>Search for movies or shows with your preferred quality settings.</p>
+                    <p style="margin-top: 10px; font-size: 13px;">
+                        Example: "Show me The Matrix in 4K with adaptive streaming"
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Player Page -->
+    <div id="videoPlayerPage" class="video-player-page hidden">
+        <div class="video-header">
+            <button class="btn-back" onclick="closeVideoPlayer()">
+                <span>←</span>
+                <span>Back to Results</span>
+            </button>
+            <div class="video-info">
+                <h2 id="videoTitle">Loading...</h2>
+                <p id="videoProvider">Provider</p>
+            </div>
+        </div>
+        <div class="video-container">
+            <div class="video-wrapper">
+                <video id="videoElement" controls autoplay>
+                    <source src="videoplayback.mp4" type="video/mp4">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://127.0.0.1:5001';
+        let currentUser = null;
+        let currentResults = { smart: null, providers: null, intents: null };
+        let selectedProvider = null;
+        let selectedContent = null;
+        let keyPair = null;
+        let publicKeyB64 = null;
+
+        // Generate encryption key pair
+        async function generateKeyPair() {
+            try {
+                keyPair = await window.crypto.subtle.generateKey(
+                    {
+                        name: "RSA-PSS",
+                        modulusLength: 2048,
+                        publicExponent: new Uint8Array([1, 0, 1]),
+                        hash: "SHA-256"
+                    },
+                    true,
+                    ["sign", "verify"]
+                );
+                
+                const publicKeyDer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
+                publicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyDer)));
+                console.log("Key pair generated successfully");
+                return true;
+            } catch (error) {
+                console.error("Failed to generate key pair:", error);
+                return false;
+            }
+        }
+
+        async function signPayload(payload) {
+            if (!keyPair) {
+                throw new Error("Key pair not initialized");
+            }
+
+            const payloadString = JSON.stringify(payload, Object.keys(payload).sort());
+            const encoder = new TextEncoder();
+            const data = encoder.encode(payloadString);
+
+            const signature = await window.crypto.subtle.sign(
+                {
+                    name: "RSA-PSS",
+                    saltLength: 32
+                },
+                keyPair.privateKey,
+                data
+            );
+
+            return btoa(String.fromCharCode(...new Uint8Array(signature)));
+        }
+
+        // Check if user is already logged in on page load
+        window.onload = async function() {
+            await generateKeyPair();
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/user`, {
+                    credentials: 'include'
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    showMainApp(data);
+                }
+            } catch (error) {
+                console.error('Auth check error:', error);
+            }
+        };
+
+        function showLoginForm() {
+            document.getElementById('loginForm').classList.remove('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+            document.getElementById('mainApp').classList.add('hidden');
+            document.getElementById('videoPlayerPage').classList.add('hidden');
+            document.getElementById('loginError').classList.add('hidden');
+        }
+
+        function showRegisterForm() {
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('registerForm').classList.remove('hidden');
+            document.getElementById('mainApp').classList.add('hidden');
+            document.getElementById('videoPlayerPage').classList.add('hidden');
+            document.getElementById('registerError').classList.add('hidden');
+            document.getElementById('registerSuccess').classList.add('hidden');
+        }
+
+        function showMainApp(user) {
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+            document.getElementById('mainApp').classList.remove('hidden');
+            document.getElementById('videoPlayerPage').classList.add('hidden');
+            currentUser = user;
+            document.getElementById('userName').textContent = user.name;
+            document.getElementById('userEmail').textContent = user.email;
+            document.getElementById('userAvatar').textContent = user.name.charAt(0).toUpperCase();
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const btn = document.getElementById('loginBtn');
+            const errorDiv = document.getElementById('loginError');
+            
+            btn.disabled = true;
+            btn.textContent = 'Logging in...';
+            errorDiv.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMainApp(data.user);
+                } else {
+                    errorDiv.textContent = data.error || 'Login failed';
+                    errorDiv.classList.remove('hidden');
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Connection error. Make sure Flask is running on port 5001.';
+                errorDiv.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Login';
+            }
+        }
+
+        async function handleRegister(event) {
+            event.preventDefault();
+            
+            if (!keyPair || !publicKeyB64) {
+                const errorDiv = document.getElementById('registerError');
+                errorDiv.textContent = 'Encryption not ready. Please refresh the page.';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+            
+            const name = document.getElementById('registerName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const btn = document.getElementById('registerBtn');
+            const errorDiv = document.getElementById('registerError');
+            const successDiv = document.getElementById('registerSuccess');
+            
+            btn.disabled = true;
+            btn.textContent = 'Registering...';
+            errorDiv.classList.add('hidden');
+            successDiv.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        name, 
+                        email, 
+                        password,
+                        publicKey: publicKeyB64 
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    successDiv.textContent = '✓ Registration successful! Your account is secured with encryption.';
+                    successDiv.classList.remove('hidden');
+                    document.getElementById('registerFormElement').reset();
+                    setTimeout(() => {
+                        showLoginForm();
+                        document.getElementById('loginEmail').value = email;
+                    }, 2000);
+                } else {
+                    errorDiv.textContent = data.error || 'Registration failed';
+                    errorDiv.classList.remove('hidden');
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Connection error. Make sure Flask is running on port 5001.';
+                errorDiv.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Register';
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                await fetch(`${API_BASE_URL}/api/logout`, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                currentUser = null;
+                currentResults = { smart: null, providers: null, intents: null };
+                document.getElementById('resultsArea').innerHTML = `
+                    <div class="placeholder-message">
+                        <h3>Welcome to StreamBot!</h3>
+                        <p>Search for movies or shows with your preferred quality settings.</p>
+                    </div>
+                `;
+                showLoginForm();
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                handleSearch();
+            }
+        }
+
+        function switchTab(event, tabName) {
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            displayResults(tabName);
+        }
+
+        async function handleSearch() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                showMessage('Please enter a search query', 'error');
+                return;
+            }
+            const btn = document.getElementById('searchBtn');
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+            document.getElementById('resultsArea').innerHTML = `
+                <div class="loading"><div class="spinner"></div><p>Analyzing your request...</p></div>
+            `;
+            try {
+                await Promise.all([
+                    fetchSmartSearch(query),
+                    fetchProviders(query),
+                    fetchIntents(query)
+                ]);
+                displayResults('smart');
+            } catch (error) {
+                showMessage('Error fetching results. Make sure Flask is running on port 5001.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Search';
+            }
+        }
+
+        async function fetchSmartSearch(query) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/takeQuery?message=${encodeURIComponent(query)}`, {
+                    method: 'POST'
+                });
+                currentResults.smart = await response.json();
+            } catch (error) {
+                console.error('Smart search error:', error);
+                currentResults.smart = { error: error.message };
+            }
+        }
+
+        async function fetchProviders(query) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/findRelevant?message=${encodeURIComponent(query)}`, {
+                    method: 'POST'
+                });
+                currentResults.providers = await response.json();
+            } catch (error) {
+                console.error('Provider search error:', error);
+                currentResults.providers = { error: error.message };
+            }
+        }
+
+        async function fetchIntents(query) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/getIntent?message=${encodeURIComponent(query)}`, {
+                    method: 'POST'
+                });
+                currentResults.intents = await response.json();
+            } catch (error) {
+                console.error('Intent extraction error:', error);
+                currentResults.intents = { error: error.message };
+            }
+        }
+
+        function displayResults(type) {
+            const resultsArea = document.getElementById('resultsArea');
+            if (type === 'smart') displaySmartResults(resultsArea);
+            else if (type === 'providers') displayProviderResults(resultsArea);
+            else if (type === 'intents') displayIntentResults(resultsArea);
+        }
+
+        function displaySmartResults(container) {
+            if (!currentResults.smart) {
+                container.innerHTML = '<div class="placeholder-message"><p>No results yet</p></div>';
+                return;
+            }
+            if (currentResults.smart.error) {
+                container.innerHTML = `<div class="error">${currentResults.smart.error}</div>`;
+                return;
+            }
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🎯 Personalized Results</h3>';
+            if (Array.isArray(currentResults.smart)) {
+                currentResults.smart.forEach(contentObj => {
+                    for (const [contentName, providers] of Object.entries(contentObj)) {
+                        html += createContentCard(contentName, providers);
+                    }
+                });
+            } else {
+                html += '<p>No results found</p>';
+            }
+            container.innerHTML = html;
+        }
+
+        function displayProviderResults(container) {
+            if (!currentResults.providers) {
+                container.innerHTML = '<div class="placeholder-message"><p>No results yet</p></div>';
+                return;
+            }
+            if (currentResults.providers.error) {
+                container.innerHTML = `<div class="error">${currentResults.providers.error}</div>`;
+                return;
+            }
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">All Available Providers</h3>';
+            if (Array.isArray(currentResults.providers)) {
+                currentResults.providers.forEach(contentObj => {
+                    for (const [contentName, providers] of Object.entries(contentObj)) {
+                        html += createContentCard(contentName, providers);
+                    }
+                });
+            } else {
+                html += '<p>No results found</p>';
+            }
+            container.innerHTML = html;
+        }
+
+        function displayIntentResults(container) {
+            if (!currentResults.intents) {
+                container.innerHTML = '<div class="placeholder-message"><p>No results yet</p></div>';
+                return;
+            }
+            if (currentResults.intents.error) {
+                container.innerHTML = `<div class="error">${currentResults.intents.error}</div>`;
+                return;
+            }
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">Extracted Preferences</h3>';
+            if (currentResults.intents.movie) {
+                html += `<div class="intent-display"><h4>🎬 Content</h4><div class="intent-item"><strong>${currentResults.intents.movie}</strong></div></div>`;
+            }
+            if (currentResults.intents.intent_vector) {
+                const labels = ['Resolution', 'Frame Rate', 'Latency', 'Adaptive Streaming', 'Buffer Strategy'];
+                html += `<div class="intent-display"><h4>Preference Vector</h4>`;
+                currentResults.intents.intent_vector.forEach((value, index) => {
+                    html += `<div class="intent-item">${labels[index]}: <strong>${value}</strong></div>`;
+                });
+                html += `</div><div class="intent-display"><h4>ML Vector</h4><pre>${JSON.stringify(currentResults.intents.intent_vector, null, 2)}</pre></div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        function createContentCard(contentName, providers) {
+            let html = `<div class="content-card">
+                <div class="content-title">${contentName}</div>`;
+            
+            providers.forEach((provider, index) => {
+                const [providerName, similarity] = provider;
+                const percentage = (similarity * 100).toFixed(1);
+                const safeContent = contentName.replace(/'/g, "\\'");
+                const safeProvider = providerName.replace(/'/g, "\\'");
+                html += `
+                    <div class="provider-item" onclick="openVideoPlayer('${safeContent}', '${safeProvider}', ${similarity})">
+                        <div class="provider-name">
+                            <div class="rank-badge">${index + 1}</div>
+                            <span>${providerName}</span>
+                        </div>
+                        <div class="similarity-score">${percentage}% Match</div>
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+            return html;
+        }
+
+        function openVideoPlayer(content, provider, similarity) {
+            // Store current selection
+            selectedContent = content;
+            selectedProvider = provider;
+            
+            // Update video player info
+            document.getElementById('videoTitle').textContent = content;
+            document.getElementById('videoProvider').textContent = `${provider} • ${(similarity * 100).toFixed(1)}% Match`;
+            
+            // Show video player page
+            document.getElementById('videoPlayerPage').classList.remove('hidden');
+            document.getElementById('mainApp').classList.add('hidden');
+            
+            // Reset and play video
+            const videoElement = document.getElementById('videoElement');
+            videoElement.load();
+            videoElement.play();
+        }
+
+        function closeVideoPlayer() {
+            // Hide video player
+            document.getElementById('videoPlayerPage').classList.add('hidden');
+            document.getElementById('mainApp').classList.remove('hidden');
+            
+            // Pause video
+            const videoElement = document.getElementById('videoElement');
+            videoElement.pause();
+        }
+
+        function showMessage(message, type) {
+            const resultsArea = document.getElementById('resultsArea');
+            resultsArea.innerHTML = `<div class="${type}">${message}</div>`;
+        }
+    </script>
+</body>
+</html>
