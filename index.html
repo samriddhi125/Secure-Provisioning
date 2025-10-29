@@ -626,8 +626,8 @@
                     <button class="btn-search" id="searchBtn" onclick="handleSearch()">Search</button>
                 </div>
                 <div class="tabs">
-                    <button class="tab active" onclick="switchTab(event, 'smart')">🎯 Smart Search</button>
-                    <button class="tab" onclick="switchTab(event, 'intents')">🧠 Intents</button>
+                    <button class="tab active" onclick="switchTab(event, 'smart')">Smart Search</button>
+                    <button class="tab" onclick="switchTab(event, 'intents')">Intents</button>
                 </div>
             </div>
             <div class="results-area" id="resultsArea">
@@ -963,7 +963,7 @@
                 container.innerHTML = `<div class="error">${currentResults.smart.error}</div>`;
                 return;
             }
-            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🎯 Personalized Results</h3>';
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">Personalized Results</h3>';
             if (Array.isArray(currentResults.smart)) {
                 currentResults.smart.forEach(contentObj => {
                     for (const [contentName, providers] of Object.entries(contentObj)) {
