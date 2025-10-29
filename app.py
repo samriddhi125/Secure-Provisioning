@@ -1,4 +1,5 @@
-from flask import Flask, jsonify, request, session
+import os
+from flask import Flask, jsonify, request, session, send_from_directory
 from flask_cors import CORS
 from fetch_complete import RetrieveProviders
 import json
@@ -54,6 +55,11 @@ def init_db():
     except Exception as e:
         print(f"Database initialization error: {e}")
 
+
+@app.route('/')
+def serve_index():
+    """Serves the index.html file."""
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index.html')
 
 # ============= AUTHENTICATION ENDPOINTS =============
 
