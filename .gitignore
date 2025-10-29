@@ -18,3 +18,9 @@ videoplayback.mp4
 .ipynb_checkpoints/
 
 .DS_Store
+
+
+app-dev.py 
+app-dev2.py 
+
+index-dev.html

@@ -36,6 +36,7 @@
         .main-container {
             max-width: 1400px;
             width: 100%;
+            transition: filter 0.3s ease;
         }
 
         .main-card {
@@ -127,8 +128,25 @@
 
         .btn-confirm {
             background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
-            padding: 10px 20px;
+            padding: 12px 24px;
             margin-top: 10px;
+            width: auto;
+        }
+
+        .btn-confirm:hover {
+            box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4);
+        }
+
+        .btn-cancel {
+            background: #95a5a6;
+            padding: 12px 24px;
+            margin-top: 10px;
+            width: auto;
+        }
+        .btn-cancel:hover {
+            background: #7f8c8d;
+            box-shadow: none;
+            transform: none;
         }
 
         .toggle-text {
@@ -527,6 +545,63 @@
             border-radius: 10px;
         }
 
+        /* --- STYLES FOR CONFIRMATION MODAL --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+        }
+
+        .modal-content h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 22px;
+        }
+
+        .modal-content p {
+            font-size: 16px;
+            color: #555;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        .modal-content p strong {
+            color: #333;
+            font-weight: 600;
+        }
+        
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .modal-message {
+            font-size: 14px;
+            margin-top: 20px;
+            font-weight: 600;
+        }
+        .modal-message.error { color: #c33; }
+        .modal-message.success { color: #3c3; }
+        /* --- END OF MODAL STYLES --- */
+
+
         @media (max-width: 768px) {
             .main-card {
                 padding: 20px;
@@ -626,8 +701,8 @@
                     <button class="btn-search" id="searchBtn" onclick="handleSearch()">Search</button>
                 </div>
                 <div class="tabs">
-                    <button class="tab active" onclick="switchTab(event, 'smart')">Smart Search</button>
-                    <button class="tab" onclick="switchTab(event, 'intents')">Intents</button>
+                    <button class="tab active" onclick="switchTab(event, 'smart')">🎯 Smart Search</button>
+                    <button class="tab" onclick="switchTab(event, 'intents')">🧠 Intents</button>
                 </div>
             </div>
             <div class="results-area" id="resultsArea">
@@ -664,18 +739,49 @@
         </div>
     </div>
 
+    <!-- NEW: Confirmation Modal -->
+    <div id="confirmModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h2>Confirm Selection</h2>
+            <p>
+                You are about to watch:
+                <br>
+                <strong id="confirmMovieTitle">Movie Title</strong>
+                <br>
+                on
+                <br>
+                <strong id="confirmProviderName">Provider</strong>
+            </p>
+            <p style="font-size: 13px; color: #888; margin-top: -15px; margin-bottom: 30px;">
+                This action will be cryptographically signed and logged.
+            </p>
+            <div class="modal-buttons">
+                <button id="btnCancel" class="btn btn-cancel" onclick="closeConfirmationPopup()">Cancel</button>
+                <button id="btnConfirmService" class="btn btn-confirm" onclick="handleConfirmService()">Confirm & Play</button>
+            </div>
+            <div id="modalMessage" class="modal-message"></div>
+        </div>
+    </div>
+
     <script>
         const API_BASE_URL = '';
         let currentUser = null;
         let currentResults = { smart: null, providers: null, intents: null };
         let selectedProvider = null;
         let selectedContent = null;
+        let selectedSimilarity = null;
+        
+        // --- START OF KEY MANAGEMENT FIX ---
         let keyPair = null;
         let publicKeyB64 = null;
 
-        // Generate encryption key pair
-        async function generateKeyPair() {
+        /**
+         * Generates a new key pair, exports them, and stores them in localStorage.
+         * Also sets the global keyPair and publicKeyB64 variables.
+         */
+        async function generateAndStoreKeys() {
             try {
+                console.log("[DEBUG] Generating new key pair...");
                 keyPair = await window.crypto.subtle.generateKey(
                     {
                         name: "RSA-PSS",
@@ -687,22 +793,84 @@
                     ["sign", "verify"]
                 );
                 
+                // Export and store private key
+                const privateKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.privateKey);
+                localStorage.setItem('streambot_private_key', JSON.stringify(privateKeyJwk));
+
+                // Export and store public key (as JWK for re-import)
+                const publicKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.publicKey);
+                localStorage.setItem('streambot_public_key', JSON.stringify(publicKeyJwk));
+
+                // Export public key (as SPKI for server)
                 const publicKeyDer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
                 publicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyDer)));
-                console.log("Key pair generated successfully");
+                
+                console.log("[DEBUG] New key pair generated and stored in localStorage.");
+                console.log(`[DEBUG] Generated Public Key (Base64): ${publicKeyB64.substring(0, 40)}...`);
                 return true;
             } catch (error) {
-                console.error("Failed to generate key pair:", error);
+                console.error("Failed to generate/store keys:", error);
                 return false;
             }
         }
 
+        /**
+         * Loads keys from localStorage, imports them, and sets the global keyPair.
+         */
+        async function loadKeysFromStorage() {
+            const privateKeyJwkStr = localStorage.getItem('streambot_private_key');
+            const publicKeyJwkStr = localStorage.getItem('streambot_public_key');
+
+            if (privateKeyJwkStr && publicKeyJwkStr) {
+                try {
+                    const privateKeyJwk = JSON.parse(privateKeyJwkStr);
+                    const publicKeyJwk = JSON.parse(publicKeyJwkStr);
+
+                    console.log("[DEBUG] Loading keys from localStorage...");
+                    const privateKey = await window.crypto.subtle.importKey(
+                        "jwk", privateKeyJwk, { name: "RSA-PSS", hash: "SHA-256" }, true, ["sign"]
+                    );
+                    const publicKey = await window.crypto.subtle.importKey(
+                        "jwk", publicKeyJwk, { name: "RSA-PSS", hash: "SHA-256" }, true, ["verify"]
+                    );
+                    
+                    keyPair = { privateKey: privateKey, publicKey: publicKey };
+
+                    // Also re-generate the SPKI/B64 version for handleRegister
+                    const publicKeyDer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
+                    publicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyDer)));
+
+                    console.log("[DEBUG] Keys successfully loaded from localStorage.");
+                    return true;
+                } catch (error) {
+                    console.error("Failed to import keys, clearing storage:", error);
+                    localStorage.removeItem('streambot_private_key');
+                    localStorage.removeItem('streambot_public_key');
+                    return false;
+                }
+            }
+            console.log("[DEBUG] No keys found in localStorage.");
+            return false;
+        }
+        // --- END OF KEY MANAGEMENT FIX ---
+
+
         async function signPayload(payload) {
             if (!keyPair) {
+                console.error("Key pair not initialized. User may need to log out and log back in.");
                 throw new Error("Key pair not initialized");
             }
 
-            const payloadString = JSON.stringify(payload, Object.keys(payload).sort());
+            // Create a canonical JSON string that matches Python's json.dumps(sort_keys=True, separators=(',',':'))
+            const sortedKeys = Object.keys(payload).sort();
+            const parts = sortedKeys.map(key => {
+                const value = JSON.stringify(payload[key]);
+                return `"${key}":${value}`;
+            });
+            const payloadString = `{${parts.join(',')}}`;
+            
+            console.log("[DEBUG] Canonical Payload String:", payloadString);
+
             const encoder = new TextEncoder();
             const data = encoder.encode(payloadString);
 
@@ -715,12 +883,20 @@
                 data
             );
 
-            return btoa(String.fromCharCode(...new Uint8Array(signature)));
+            const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+            
+            console.log(`[DEBUG] Generated Signature (Base64): ${signatureB64.substring(0, 40)}...`);
+            
+            return signatureB64;
         }
 
         // Check if user is already logged in on page load
         window.onload = async function() {
-            await generateKeyPair();
+            // --- MODIFIED ---
+            // Load keys from storage INSTEAD of generating new ones
+            await loadKeysFromStorage(); 
+            // --- END MODIFIED ---
+            
             try {
                 const response = await fetch(`${API_BASE_URL}/api/user`, {
                     credentials: 'include'
@@ -756,6 +932,8 @@
             document.getElementById('registerForm').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             document.getElementById('videoPlayerPage').classList.add('hidden');
+            document.getElementById('mainApp').style.filter = 'none';
+            document.getElementById('confirmModal').classList.add('hidden');
             currentUser = user;
             document.getElementById('userName').textContent = user.name;
             document.getElementById('userEmail').textContent = user.email;
@@ -799,12 +977,17 @@
         async function handleRegister(event) {
             event.preventDefault();
             
-            if (!keyPair || !publicKeyB64) {
+            // --- MODIFIED ---
+            // Generate and store keys *at registration time*
+            const keysGenerated = await generateAndStoreKeys();
+            
+            if (!keysGenerated || !keyPair || !publicKeyB64) {
                 const errorDiv = document.getElementById('registerError');
-                errorDiv.textContent = 'Encryption not ready. Please refresh the page.';
+                errorDiv.textContent = 'Failed to generate security keys. Please refresh and try again.';
                 errorDiv.classList.remove('hidden');
                 return;
             }
+            // --- END MODIFIED ---
             
             const name = document.getElementById('registerName').value;
             const email = document.getElementById('registerEmail').value;
@@ -826,7 +1009,7 @@
                         name, 
                         email, 
                         password,
-                        publicKey: publicKeyB64 
+                        publicKey: publicKeyB64 // This is now the correct, stored key
                     })
                 });
                 const data = await response.json();
@@ -865,6 +1048,16 @@
                         <p>Search for movies or shows with your preferred quality settings.</p>
                     </div>
                 `;
+                
+                // --- MODIFIED ---
+                // Clear the stored keys on logout
+                console.log("[DEBUG] Logging out. Clearing keys from localStorage.");
+                localStorage.removeItem('streambot_private_key');
+                localStorage.removeItem('streambot_public_key');
+                keyPair = null;
+                publicKeyB64 = null;
+                // --- END MODIFIED ---
+
                 showLoginForm();
             } catch (error) {
                 console.error('Logout error:', error);
@@ -963,7 +1156,7 @@
                 container.innerHTML = `<div class="error">${currentResults.smart.error}</div>`;
                 return;
             }
-            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">Personalized Results</h3>';
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🎯 Personalized Results</h3>';
             if (Array.isArray(currentResults.smart)) {
                 currentResults.smart.forEach(contentObj => {
                     for (const [contentName, providers] of Object.entries(contentObj)) {
@@ -1032,7 +1225,8 @@
                 const safeContent = contentName.replace(/'/g, "\\'");
                 const safeProvider = providerName.replace(/'/g, "\\'");
                 html += `
-                    <div class="provider-item" onclick="openVideoPlayer('${safeContent}', '${safeProvider}', ${similarity})">
+                    <!-- THIS ONCLICK HAS BEEN CHANGED -->
+                    <div class="provider-item" onclick="showConfirmationPopup('${safeContent}', '${safeProvider}', ${similarity})">
                         <div class="provider-name">
                             <div class="rank-badge">${index + 1}</div>
                             <span>${providerName}</span>
@@ -1046,14 +1240,104 @@
             return html;
         }
 
-        function openVideoPlayer(content, provider, similarity) {
+        // --- NEW FUNCTION ---
+        // Shows the modal and stores the selection
+        function showConfirmationPopup(content, provider, similarity) {
             // Store current selection
             selectedContent = content;
             selectedProvider = provider;
+            selectedSimilarity = similarity;
             
+            // Update modal text
+            document.getElementById('confirmMovieTitle').textContent = content;
+            document.getElementById('confirmProviderName').textContent = provider;
+            
+            // Reset modal state
+            document.getElementById('modalMessage').innerHTML = '';
+            document.getElementById('btnConfirmService').disabled = false;
+            document.getElementById('btnConfirmService').textContent = 'Confirm & Play';
+            
+            // Show modal and blur background
+            document.getElementById('confirmModal').classList.remove('hidden');
+            document.getElementById('mainApp').style.filter = 'blur(5px)';
+        }
+
+        // --- NEW FUNCTION ---
+        // Hides the modal
+        function closeConfirmationPopup() {
+            document.getElementById('confirmModal').classList.add('hidden');
+            document.getElementById('mainApp').style.filter = 'none';
+        }
+
+        // --- NEW FUNCTION ---
+        // Called by the "Confirm" button
+        async function handleConfirmService() {
+            const btn = document.getElementById('btnConfirmService');
+            const msgDiv = document.getElementById('modalMessage');
+
+            btn.disabled = true;
+            btn.textContent = 'Verifying...';
+            msgDiv.innerHTML = '';
+
+            try {
+                // 1. Create the payload
+                const payload = {
+                    action: 'watch',
+                    movie_title: selectedContent,
+                    provider: selectedProvider,
+                    quality: parseFloat(selectedSimilarity.toFixed(4)) // Use 4 decimal places for precision
+                };
+                
+                console.log("[DEBUG] Sending Payload to API:", payload);
+
+                // 2. Sign the payload
+                const signature = await signPayload(payload);
+
+                // 3. Call the confirmation API
+                const response = await fetch(`${API_BASE_URL}/api/confirm_service`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        payload: payload, 
+                        signature: signature 
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // 4. On SUCCESS, show success and navigate
+                    msgDiv.className = 'modal-message success';
+                    msgDiv.textContent = `✓ ${data.message}`;
+                    
+                    console.log("[DEBUG] Signature VERIFIED by backend.");
+
+                    setTimeout(() => {
+                        closeConfirmationPopup();
+                        navigateToVideoPlayer(); // Go to video player
+                    }, 1000);
+
+                } else {
+                    // 5. On FAILURE, show error
+                    throw new Error(data.message || "Verification failed");
+                }
+
+            } catch (error) {
+                console.error("Confirmation error:", error);
+                msgDiv.className = 'modal-message error';
+                msgDiv.textContent = `❌ ${error.message}`;
+                btn.disabled = false;
+                btn.textContent = 'Confirm & Play';
+            }
+        }
+
+        // --- RENAMED & MODIFIED ---
+        // This function now *only* handles the navigation
+        function navigateToVideoPlayer() {
             // Update video player info
-            document.getElementById('videoTitle').textContent = content;
-            document.getElementById('videoProvider').textContent = `${provider} • ${(similarity * 100).toFixed(1)}% Match`;
+            document.getElementById('videoTitle').textContent = selectedContent;
+            document.getElementById('videoProvider').textContent = `${selectedProvider} • ${(selectedSimilarity * 100).toFixed(1)}% Match`;
             
             // Show video player page
             document.getElementById('videoPlayerPage').classList.remove('hidden');
@@ -1069,6 +1353,7 @@
             // Hide video player
             document.getElementById('videoPlayerPage').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
+            document.getElementById('mainApp').style.filter = 'none';
             
             // Pause video
             const videoElement = document.getElementById('videoElement');

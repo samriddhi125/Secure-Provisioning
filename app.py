@@ -26,6 +26,7 @@ app.config['SESSION_TYPE'] = 'filesystem'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 # Enable CORS with credentials
+# We keep this in case you want to test from a different frontend port
 CORS(app, supports_credentials=True, origins=['http://127.0.0.1:*', 'http://localhost:*'])
 
 # Initialize components
@@ -55,11 +56,13 @@ def init_db():
     except Exception as e:
         print(f"Database initialization error: {e}")
 
+# ============= FRONTEND ROUTE =============
 
 @app.route('/')
 def serve_index():
     """Serves the index.html file."""
-    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index.html')
+    # This finds index.html in the same directory as app.py
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index-dev.html')
 
 # ============= AUTHENTICATION ENDPOINTS =============
 
@@ -78,6 +81,13 @@ def register():
     
     if not public_key_b64:
         return jsonify({"error": "Public key is required for secure transactions"}), 400
+    
+    # <<< ADDED DEBUG LOGS FOR REGISTRATION >>>
+    print("\n" + "="*25 + " DEBUG: REGISTRATION " + "="*25)
+    print(f"[DEBUG] Attempting to register user: {email}")
+    print(f"[DEBUG] Storing Public Key (Base64): {public_key_b64[:30]}...{public_key_b64[-30:]}")
+    print("="*72 + "\n")
+    # <<< END OF ADDED LOGS >>>
     
     try:
         with TransactionDatabase("transactions.db") as db_conn:
@@ -183,6 +193,13 @@ def confirm_service():
     print("\n--- [BACKEND LOG] Starting Signature Verification ---")
     print(f"[BACKEND LOG] Request received from user: {email}")
 
+    # <<< ADDED DEBUG LOGS FOR VERIFICATION >>>
+    print("\n" + "="*25 + " DEBUG: INCOMING DATA " + "="*25)
+    print(f"[DEBUG] Received Payload: {payload}")
+    print(f"[DEBUG] Received Signature (Base64): {signature_b64[:30]}...{signature_b64[-30:]}")
+    print("="*72 + "\n")
+    # <<< END OF ADDED LOGS >>>
+
     try:
         # Fetch public key from database
         with TransactionDatabase("transactions.db") as db_conn:
@@ -196,6 +213,13 @@ def confirm_service():
             
             public_key_b64 = user['publicKey']
 
+        # <<< ADDED DEBUG LOGS FOR KEY MATCHING >>>
+        print("\n" + "="*25 + " DEBUG: KEY MATCHING " + "="*26)
+        print(f"[DEBUG] Retrieved Public Key from DB for {email}")
+        print(f"[DEBUG] DB Key (Base64): {public_key_b64[:30]}...{public_key_b64[-30:]}")
+        print("="*72 + "\n")
+        # <<< END OF ADDED LOGS >>>
+
         print("[BACKEND LOG] Public key found. Decoding key and signature...")
         
         # Decode public key and signature
@@ -204,18 +228,24 @@ def confirm_service():
         public_key = load_der_public_key(public_key_der)
         
         # Prepare payload for verification
+        # NOTE: This json.dumps format MUST match the format used on the client-side
         payload_string = json.dumps(payload, sort_keys=True, separators=(',', ':'))
         payload_bytes = payload_string.encode('utf-8')
         
-        print(f"[BACKEND LOG] Verifying signature against payload: {payload_string}")
-        
+        # <<< ADDED DEBUG LOGS FOR VERIFICATION DATA >>>
+        print("\n" + "="*25 + " DEBUG: VERIFICATION " + "="*26)
+        print(f"[DEBUG] Canonical Payload String for Verification:\n{payload_string}")
+        print(f"[DEBUG] Now attempting to verify signature using the *retrieved DB key*...")
+        print("="*72 + "\n")
+        # <<< END OF ADDED LOGS >>>
+        print(f"salt length: {hashes.SHA256.digest_size}")
         # Verify signature
         public_key.verify(
             signature,
             payload_bytes,
             padding.PSS(
                 mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
+                salt_length=hashes.SHA256.digest_size
             ),
             hashes.SHA256()
         )
@@ -375,10 +405,10 @@ def find_relevant_helper(query, intent_vector=None):
         return final_results
         
     except ConnectionError as e:
-        print(f"❌ TMDB API connection failed: {e}")
+        print(f"TMDB API connection failed: {e}")
         return {"error": "Unable to connect to movie database. Please try again later."}
     except Exception as e:
-        print(f"❌ Search error: {e}")
+        print(f"Search error: {e}")
         import traceback
         traceback.print_exc()
         return {"error": f"Search failed: {str(e)}"}
