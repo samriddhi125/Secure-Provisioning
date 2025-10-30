@@ -12,7 +12,7 @@ class RetrieveProviders():
         load_dotenv()
         tmdb.API_KEY=os.getenv("API_KEY")
         print("supp")
-        # print(os.getenv("API_KEY"))
+        print(os.getenv("API_KEY"))
         
 
     

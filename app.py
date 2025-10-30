@@ -13,8 +13,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import secrets
 import base64
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives.serialization import load_der_public_key
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 from cryptography.exceptions import InvalidSignature
 from requests.exceptions import ConnectionError
 from datetime import timedelta
@@ -26,7 +27,6 @@ app.config['SESSION_TYPE'] = 'filesystem'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 # Enable CORS with credentials
-# We keep this in case you want to test from a different frontend port
 CORS(app, supports_credentials=True, origins=['http://127.0.0.1:*', 'http://localhost:*'])
 
 # Initialize components
@@ -34,37 +34,146 @@ retriever = RetrieveProviders()
 db = TransactionDatabase("transactions.db")
 intentExtractor = IntentExtractor()
 
+# --- SERVER-SIDE KEY MANAGEMENT (MODIFIED) ---
+server_private_key = None
+server_public_key = None
+server_public_key_pem_b64 = None # Re-added to send to client
 
-# ============= DATABASE INITIALIZATION =============
+def load_or_generate_server_keys():
+    """Loads server keys from env vars or generates them if they don't exist."""
+    global server_private_key, server_public_key, server_public_key_pem_b64
+    
+    priv_key_b64 = os.environ.get("SERVER_PRIVATE_KEY")
+    pub_key_b64 = os.environ.get("SERVER_PUBLIC_KEY")
+
+    if priv_key_b64 and pub_key_b64:
+        print("✓ Loading server keys from environment variables...")
+        try:
+            private_key_pem = base64.b64decode(priv_key_b64)
+            public_key_pem = base64.b64decode(pub_key_b64)
+            
+            server_private_key = load_pem_private_key(private_key_pem, password=None)
+            server_public_key = load_pem_public_key(public_key_pem)
+            
+            # --- MODIFIED: Store the b64 public key for the API ---
+            server_public_key_pem_b64 = pub_key_b64
+            
+            print("✓ Server keys loaded successfully.")
+        except Exception as e:
+            print(f"❌ FAILED TO LOAD KEYS: {e}")
+            print("Please check your environment variables. Exiting.")
+            exit(1)
+    else:
+        print("⚠️ Server keys not found in environment. Generating new keys...")
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048
+        )
+        public_key = private_key.public_key()
+
+        private_key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        priv_key_b64_str = base64.b64encode(private_key_pem).decode('utf-8')
+        
+        public_key_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        pub_key_b64_str = base64.b64encode(public_key_pem).decode('utf-8')
+
+        print("\n" + "="*80)
+        print("‼️ PLEASE SET THESE ENVIRONMENT VARIABLES FOR YOUR SERVER ‼️")
+        print("\n--- SET `SERVER_PRIVATE_KEY` to this value: ---")
+        print(priv_key_b64_str)
+        print("\n--- SET `SERVER_PUBLIC_KEY` to this value: ---")
+        print(pub_key_b64_str)
+        print("\n" + "="*80)
+        print("Server will exit. Please set the variables and restart.")
+        exit(0)
+
+def sign_payload(payload):
+    """Signs a JSON payload with the server's private key."""
+    if not server_private_key:
+        raise Exception("Server private key is not loaded.")
+    
+    payload_string = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    payload_bytes = payload_string.encode('utf-8')
+    
+    signature = server_private_key.sign(
+        payload_bytes,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=hashes.SHA256.digest_size
+        ),
+        hashes.SHA256()
+    )
+    
+    return base64.b64encode(signature).decode('utf-8')
+
+# ============= DATABASE INITIALIZATION (MODIFIED) =============
 
 def init_db():
-    """Initialize database with encryption support."""
+    """Initialize database, add signature column, and remove old user publicKey column."""
     try:
         with TransactionDatabase("transactions.db") as db_conn:
-            # Check if publicKey column exists, if not add it
+            print("✓ Database connection successful.")
             cursor = db_conn.cursor
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [col[1] for col in cursor.fetchall()]
             
-            if 'publicKey' not in columns:
-                print("Adding publicKey column to users table...")
-                cursor.execute("ALTER TABLE users ADD COLUMN publicKey TEXT")
+            # 1. Add 'signature' column to transactions table if it doesn't exist
+            cursor.execute("PRAGMA table_info(transactions)")
+            trans_columns = [col[1] for col in cursor.fetchall()]
+            if 'signature' not in trans_columns:
+                print("Adding signature column to transactions table...")
+                cursor.execute("ALTER TABLE transactions ADD COLUMN signature TEXT")
                 db_conn.conn.commit()
-                print("✓ publicKey column added successfully")
+                print("✓ signature column added successfully")
+
+            # 2. Clean up: Drop the 'publicKey' column from 'users' table if it exists
+            cursor.execute("PRAGMA table_info(users)")
+            user_columns = [col[1] for col in cursor.fetchall()]
+            if 'publicKey' in user_columns:
+                print("Dropping legacy 'publicKey' column from 'users' table...")
+                # Note: Dropping columns in SQLite is complex. We create a new table.
+                # This is safe *only* because we're just starting development.
+                cursor.execute("PRAGMA foreign_keys=off")
+                cursor.execute("BEGIN TRANSACTION")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users_new (
+                        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        phone_no TEXT,
+                        email TEXT UNIQUE NOT NULL,
+                        age INTEGER,
+                        password TEXT NOT NULL
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO users_new (user_id, name, phone_no, email, age, password)
+                    SELECT user_id, name, phone_no, email, age, password FROM users
+                """)
+                cursor.execute("DROP TABLE users")
+                cursor.execute("ALTER TABLE users_new RENAME TO users")
+                cursor.execute("COMMIT")
+                cursor.execute("PRAGMA foreign_keys=on")
+                print("✓ 'publicKey' column removed successfully.")
             
-            print("✓ Database initialized with encryption support")
+            print("✓ Database initialized and schema cleaned.")
     except Exception as e:
         print(f"Database initialization error: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ============= FRONTEND ROUTE =============
 
 @app.route('/')
 def serve_index():
     """Serves the index.html file."""
-    # This finds index.html in the same directory as app.py
     return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index-dev.html')
 
-# ============= AUTHENTICATION ENDPOINTS =============
+# ============= AUTHENTICATION ENDPOINTS (MODIFIED) =============
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -72,43 +181,31 @@ def register():
     name = data.get('name')
     email = data.get('email')
     password = data.get('password')
-    public_key_b64 = data.get('publicKey')  # New: Accept public key
     phone_no = data.get('phone_no', '0000000000')
     age = data.get('age', 18)
     
     if not name or not email or not password:
         return jsonify({"error": "Name, email and password are required"}), 400
     
-    if not public_key_b64:
-        return jsonify({"error": "Public key is required for secure transactions"}), 400
-    
-    # <<< ADDED DEBUG LOGS FOR REGISTRATION >>>
-    print("\n" + "="*25 + " DEBUG: REGISTRATION " + "="*25)
-    print(f"[DEBUG] Attempting to register user: {email}")
-    print(f"[DEBUG] Storing Public Key (Base64): {public_key_b64[:30]}...{public_key_b64[-30:]}")
-    print("="*72 + "\n")
-    # <<< END OF ADDED LOGS >>>
-    
     try:
         with TransactionDatabase("transactions.db") as db_conn:
-            # Check if user exists
             existing = db_conn.get_user_by_email(email)
             
             if existing:
                 return jsonify({"error": "Email already registered"}), 400
             
-            # Create user with public key using the add_user method
             hashed_password = generate_password_hash(password)
-            user_id = db_conn.add_user(
-                name=name,
-                phone_no=phone_no,
-                email=email,
-                age=age,
-                password=hashed_password,
-                public_key=public_key_b64
-            )
             
-            print(f"\n[BACKEND LOG] Registered user '{email}' (ID: {user_id}) with encrypted key pair")
+            # --- MODIFIED: Inserts into the new, cleaner 'users' table ---
+            db_conn.cursor.execute(
+                """INSERT INTO users (name, phone_no, email, age, password) 
+                   VALUES (?, ?, ?, ?, ?)""",
+                (name, phone_no, email, age, hashed_password)
+            )
+            user_id = db_conn.cursor.lastrowid
+            db_conn.conn.commit()
+            
+            print(f"\n[BACKEND LOG] Registered user '{email}' (ID: {user_id})")
         
         return jsonify({"message": "Registration successful"}), 201
     except Exception as e:
@@ -141,7 +238,6 @@ def login():
             if not check_password_hash(user_dict['password'], password):
                 return jsonify({"error": "Invalid credentials"}), 401
             
-            # Set session
             session['user_id'] = user_dict['user_id']
             session['user_email'] = user_dict['email']
             session['user_name'] = user_dict['name']
@@ -174,132 +270,110 @@ def get_user():
     return jsonify({"error": "Not authenticated"}), 401
 
 
-# ============= ENCRYPTION/SIGNATURE ENDPOINTS =============
+# ============= ENCRYPTION/SIGNATURE ENDPOINTS (MODIFIED) =============
+
+# --- RE-ADDED /api/public_key route ---
+@app.route('/api/public_key', methods=['GET'])
+def get_public_key():
+    """Provides the client with the server's public key."""
+    if not server_public_key_pem_b64:
+        return jsonify({"error": "Server key not available"}), 500
+        
+    return jsonify({"publicKey": server_public_key_pem_b64})
+
 
 @app.route('/api/confirm_service', methods=['POST'])
 def confirm_service():
-    """Verify cryptographic signature for secure transactions."""
+    """
+    (MODIFIED LOGIC)
+    Receives a payload from the client, signs it with the server's private key,
+    and stores the payload + signature in the database as a non-repudiable log.
+    """
     if 'user_email' not in session:
         return jsonify({"error": "Not authenticated"}), 401
 
     data = request.get_json()
     payload = data.get('payload')
-    signature_b64 = data.get('signature')
     
-    if not payload or not signature_b64:
-        return jsonify({"error": "Payload and signature are required"}), 400
+    if not payload:
+        return jsonify({"error": "Payload is required"}), 400
 
     email = session['user_email']
-    print("\n--- [BACKEND LOG] Starting Signature Verification ---")
+    print("\n--- [BACKEND LOG] Starting Service Confirmation (Notarization) ---")
     print(f"[BACKEND LOG] Request received from user: {email}")
-
-    # <<< ADDED DEBUG LOGS FOR VERIFICATION >>>
-    print("\n" + "="*25 + " DEBUG: INCOMING DATA " + "="*25)
-    print(f"[DEBUG] Received Payload: {payload}")
-    print(f"[DEBUG] Received Signature (Base64): {signature_b64[:30]}...{signature_b64[-30:]}")
-    print("="*72 + "\n")
-    # <<< END OF ADDED LOGS >>>
+    print(f"[BACKEND LOG] Payload to sign: {payload}")
 
     try:
-        # Fetch public key from database
-        with TransactionDatabase("transactions.db") as db_conn:
-            user = db_conn.cursor.execute(
-                "SELECT publicKey FROM users WHERE email = ?", (email,)
-            ).fetchone()
-            
-            if not user or not user['publicKey']:
-                print(f"❌ [BACKEND LOG] Public key for user '{email}' not found")
-                return jsonify({"error": "Public key not found. Please re-register."}), 404
-            
-            public_key_b64 = user['publicKey']
-
-        # <<< ADDED DEBUG LOGS FOR KEY MATCHING >>>
-        print("\n" + "="*25 + " DEBUG: KEY MATCHING " + "="*26)
-        print(f"[DEBUG] Retrieved Public Key from DB for {email}")
-        print(f"[DEBUG] DB Key (Base64): {public_key_b64[:30]}...{public_key_b64[-30:]}")
-        print("="*72 + "\n")
-        # <<< END OF ADDED LOGS >>>
-
-        print("[BACKEND LOG] Public key found. Decoding key and signature...")
+        signature_b64 = sign_payload(payload)
         
-        # Decode public key and signature
-        public_key_der = base64.b64decode(public_key_b64)
-        signature = base64.b64decode(signature_b64)
-        public_key = load_der_public_key(public_key_der)
+        print("✅ [BACKEND LOG] Payload signed successfully.")
+        print(f"[DEBUG] Storing Signature: {signature_b64[:30]}...")
         
-        # Prepare payload for verification
-        # NOTE: This json.dumps format MUST match the format used on the client-side
-        payload_string = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-        payload_bytes = payload_string.encode('utf-8')
-        
-        # <<< ADDED DEBUG LOGS FOR VERIFICATION DATA >>>
-        print("\n" + "="*25 + " DEBUG: VERIFICATION " + "="*26)
-        print(f"[DEBUG] Canonical Payload String for Verification:\n{payload_string}")
-        print(f"[DEBUG] Now attempting to verify signature using the *retrieved DB key*...")
-        print("="*72 + "\n")
-        # <<< END OF ADDED LOGS >>>
-        print(f"salt length: {hashes.SHA256.digest_size}")
-        # Verify signature
-        public_key.verify(
-            signature,
-            payload_bytes,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=hashes.SHA256.digest_size
-            ),
-            hashes.SHA256()
-        )
-        
-        print("✅ [BACKEND LOG] SIGNATURE VERIFIED SUCCESSFULLY")
-        
-        # Log the transaction
         try:
             with TransactionDatabase("transactions.db") as db_conn:
                 user_id = session['user_id']
                 db_conn.cursor.execute(
                     """INSERT INTO transactions 
-                       (user_id, action, movie_title, provider, quality, timestamp) 
-                       VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+                       (user_id, action, movie_title, provider, quality, timestamp, signature) 
+                       VALUES (?, ?, ?, ?, ?, datetime('now'), ?)""",
                     (user_id, 
                      payload.get('action', 'unknown'),
                      payload.get('movie_title', 'unknown'),
                      payload.get('provider', 'unknown'),
-                     payload.get('quality', 'unknown'))
+                     payload.get('quality', 'unknown'),
+                     signature_b64
+                    )
                 )
                 db_conn.conn.commit()
-                print("[BACKEND LOG] Transaction logged successfully")
+                print("[BACKEND LOG] Transaction and signature logged successfully")
         except Exception as log_error:
             print(f"⚠️ [BACKEND LOG] Failed to log transaction: {log_error}")
         
         return jsonify({
             "status": "success",
-            "message": "Service confirmed: Signature verified!",
-            "transaction_id": "Generated transaction ID could go here"
+            "message": "Service action confirmed and logged by server."
         }), 200
 
-    except InvalidSignature:
-        print("❌ [BACKEND LOG] SIGNATURE VERIFICATION FAILED - TAMPERING DETECTED")
-        return jsonify({
-            "status": "error",
-            "message": "Invalid signature. Request rejected for security."
-        }), 403
-        
     except Exception as e:
-        print(f"❌ [BACKEND LOG] Verification error: {e}")
+        print(f"❌ [BACKEND LOG] Signing error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({
             "status": "error",
-            "message": f"Verification failed: {str(e)}"
+            "message": f"Signing failed: {str(e)}"
         }), 500
+
+# --- NEW ENDPOINT: /api/history ---
+@app.route('/api/history', methods=['GET'])
+def get_history():
+    """Fetches the transaction history for the logged-in user."""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+        
+    user_id = session['user_id']
+    
+    try:
+        with TransactionDatabase("transactions.db") as db_conn:
+            transactions = db_conn.cursor.execute(
+                "SELECT * FROM transactions WHERE user_id = ?",
+                (user_id,)
+            ).fetchall()
+            
+            # Convert list of row objects to list of dicts
+            history_list = [dict(row) for row in transactions]
+            
+            return jsonify(history_list), 200
+            
+    except Exception as e:
+        print(f"❌ [BACKEND LOG] Error fetching history: {e}")
+        return jsonify({"error": "Could not retrieve history"}), 500
 
 
 # ============= HELPER FUNCTIONS =============
-
+# ... (cosine_similarity, searcher, intent_helper, find_relevant_helper are all unchanged) ...
 def cosine_similarity(a, b):
     """Calculate cosine similarity between two vectors."""
     return dot(a, b) / (norm(a) * norm(b))
-
 
 def searcher(query):
     """Search for content using the retriever with retry logic."""
@@ -314,7 +388,6 @@ def searcher(query):
                 continue
             else:
                 raise  # Re-raise after final attempt
-
 
 def intent_helper(user_message):
     """Extract intents and return movie name and intent vector."""
@@ -343,7 +416,6 @@ def intent_helper(user_message):
         traceback.print_exc()
         return result
 
-
 def find_relevant_helper(query, intent_vector=None):
     """Find relevant providers based on query and intent vector."""
     if not query:
@@ -351,14 +423,12 @@ def find_relevant_helper(query, intent_vector=None):
     
     print(f"Message: {query}")
     
-    # Default preferences
     resolution = 3
     frame_rate = 1
     region_latency = 0
     adaptive_streaming = 0
     buffer_strategy = 1
     
-    # Apply custom intent vector if provided
     if intent_vector:
         if intent_vector[0]:
             resolution = intent_vector[0]
@@ -405,30 +475,29 @@ def find_relevant_helper(query, intent_vector=None):
         return final_results
         
     except ConnectionError as e:
-        print(f"TMDB API connection failed: {e}")
+        print(f"❌ TMDB API connection failed: {e}")
         return {"error": "Unable to connect to movie database. Please try again later."}
     except Exception as e:
-        print(f"Search error: {e}")
+        print(f"❌ Search error: {e}")
         import traceback
         traceback.print_exc()
         return {"error": f"Search failed: {str(e)}"}
 
 
-# ============= API ENDPOINTS =============
+# ============= API ENDPOINTS (Unchanged) =============
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
     return jsonify({
         "status": "running",
-        "encryption": "enabled",
+        "encryption": "server-notarization", 
         "database": "connected"
     }), 200
 
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Process chat request and extract intents."""
     data = request.args
     user_message = data.get('message')
     
@@ -464,7 +533,6 @@ def chat():
 
 @app.route("/fetch", methods=["POST"])
 def fetch():
-    """Fetch raw search results."""
     query = request.args.get("query")
     if not query:
         return jsonify({"error": "Query is required"}), 400
@@ -477,7 +545,7 @@ def fetch():
 
 @app.route("/getIntent", methods=["POST"])
 def getIntent():
-    """Get intent extraction for a message."""
+    """Get intent extraction, NO signature."""
     query = request.args.get("message")
     if not query:
         return jsonify({"error": "Message is required"}), 400
@@ -491,7 +559,7 @@ def getIntent():
 
 @app.route("/findRelevant", methods=["POST"])
 def find_relevant():
-    """Find relevant providers without intent extraction."""
+    """Find relevant providers, NO signature."""
     query = request.args.get("message")
     if not query:
         return jsonify({"error": "Message is required"}), 400
@@ -502,7 +570,7 @@ def find_relevant():
 
 @app.route("/takeQuery", methods=["POST"])
 def takeQuery():
-    """Smart search with intent extraction."""
+    """Smart search, NO signature."""
     query = request.args.get("message")
     if not query:
         return jsonify({"error": "Message is required"}), 400
@@ -514,14 +582,16 @@ def takeQuery():
     content = intents["movie"]
     intent_vector = intents["intent_vector"]
     result = find_relevant_helper(content, intent_vector)
+    
     return jsonify(result)
 
 
 @app.route("/view-tables", methods=["GET"])
 def view_tables():
-    """View all users and transactions (admin endpoint)."""
+    """(MODIFIED) View all users and transactions (shows signature)."""
     try:
         with TransactionDatabase("transactions.db") as db_conn:
+            # Select from the new, cleaner users table
             users = db_conn.cursor.execute(
                 "SELECT user_id, name, email, phone_no, age FROM users"
             ).fetchall()
@@ -531,9 +601,26 @@ def view_tables():
             
             return jsonify({
                 "users": [dict(row) for row in users],
-                "transactions": [dict(row) for row in transactions]
+                "transactions": [dict(row)for row in transactions]
             })
     except Exception as e:
+        print(f"Database initialization error: {e}")
+        # Be more specific if the column is gone
+        if "no such column: publicKey" in str(e):
+            print("Note: 'publicKey' column no longer exists, which is expected.")
+            # If this happens, retry without it
+            with TransactionDatabase("transactions.db") as db_conn_retry:
+                users = db_conn_retry.cursor.execute(
+                    "SELECT user_id, name, email, phone_no, age FROM users"
+                ).fetchall()
+                transactions = db_conn_retry.cursor.execute(
+                    "SELECT * FROM transactions"
+                ).fetchall()
+                return jsonify({
+                    "users": [dict(row) for row in users],
+                    "transactions": [dict(row)for row in transactions]
+                })
+
         return jsonify({"error": str(e)}), 500
 
 
@@ -541,5 +628,9 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("STREAMBOT - AI STREAMING ASSISTANT WITH ENCRYPTION")
     print("="*60 + "\n")
+    
+    load_or_generate_server_keys()
     init_db()
+    
     app.run(debug=True, port=5001, host='0.0.0.0')
+

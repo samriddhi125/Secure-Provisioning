@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StreamBot - AI Streaming Assistant</title>
     <style>
+        /* --- CSS is unchanged --- */
         * {
             margin: 0;
             padding: 0;
@@ -366,6 +367,50 @@
             margin-bottom: 15px;
             font-weight: 600;
         }
+        
+        /* --- NEW: History Item Styles --- */
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .history-details h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 3px;
+        }
+        
+        .history-details p {
+            font-size: 13px;
+            color: #777;
+        }
+
+        .history-badge {
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-weight: 600;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        
+        .history-badge.verified {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .history-badge.tampered {
+            background: #fee;
+            color: #c33;
+        }
+        /* --- End History Item Styles --- */
+
 
         .provider-item {
             display: flex;
@@ -651,7 +696,7 @@
             <div class="logo">
                 <h1>🎬 StreamBot</h1>
                 <p>Create Your Account</p>
-                <div class="security-badge">End-to-End Encryption</div>
+                <div class="security-badge">Secure Server-Side Logging</div>
             </div>
             <div id="registerError" class="error hidden"></div>
             <div id="registerSuccess" class="success hidden"></div>
@@ -703,6 +748,7 @@
                 <div class="tabs">
                     <button class="tab active" onclick="switchTab(event, 'smart')">🎯 Smart Search</button>
                     <button class="tab" onclick="switchTab(event, 'intents')">🧠 Intents</button>
+                    <button class="tab" onclick="switchTab(event, 'history')">🕒 History</button>
                 </div>
             </div>
             <div class="results-area" id="resultsArea">
@@ -739,7 +785,7 @@
         </div>
     </div>
 
-    <!-- NEW: Confirmation Modal -->
+    <!-- Confirmation Modal -->
     <div id="confirmModal" class="modal-overlay hidden">
         <div class="modal-content">
             <h2>Confirm Selection</h2>
@@ -753,7 +799,7 @@
                 <strong id="confirmProviderName">Provider</strong>
             </p>
             <p style="font-size: 13px; color: #888; margin-top: -15px; margin-bottom: 30px;">
-                This action will be cryptographically signed and logged.
+                This action will be signed and logged by the server.
             </p>
             <div class="modal-buttons">
                 <button id="btnCancel" class="btn btn-cancel" onclick="closeConfirmationPopup()">Cancel</button>
@@ -766,136 +812,124 @@
     <script>
         const API_BASE_URL = '';
         let currentUser = null;
-        let currentResults = { smart: null, providers: null, intents: null };
+        let currentResults = { smart: null, intents: null, history: null };
         let selectedProvider = null;
         let selectedContent = null;
         let selectedSimilarity = null;
         
-        // --- START OF KEY MANAGEMENT FIX ---
-        let keyPair = null;
-        let publicKeyB64 = null;
+        // --- CLIENT-SIDE CRYPTO (for VERIFICATION) ---
+        let serverPublicKey = null;
 
         /**
-         * Generates a new key pair, exports them, and stores them in localStorage.
-         * Also sets the global keyPair and publicKeyB64 variables.
+         * Helper function to convert Base64 to ArrayBuffer.
          */
-        async function generateAndStoreKeys() {
+        function b64ToBuffer(b64) {
+            const str = atob(b64);
+            const len = str.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = str.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        /**
+         * Fetches the server's public key and imports it for verification.
+         */
+        async function fetchServerPublicKey() {
             try {
-                console.log("[DEBUG] Generating new key pair...");
-                keyPair = await window.crypto.subtle.generateKey(
+                const response = await fetch(`${API_BASE_URL}/api/public_key`);
+                if (!response.ok) throw new Error('Failed to fetch public key');
+                
+                const data = await response.json();
+                const pemB64 = data.publicKey;
+
+                const pemContents = atob(pemB64);
+                
+                const pemBody = pemContents
+                    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+                    .replace(/-----END PUBLIC KEY-----/g, '')
+                    .replace(/\s/g, '');
+
+                const bodyBuffer = b64ToBuffer(pemBody);
+
+                console.log("[DEBUG] Importing server public key...");
+                serverPublicKey = await window.crypto.subtle.importKey(
+                    "spki",
+                    bodyBuffer,
                     {
                         name: "RSA-PSS",
-                        modulusLength: 2048,
-                        publicExponent: new Uint8Array([1, 0, 1]),
                         hash: "SHA-256"
                     },
                     true,
-                    ["sign", "verify"]
+                    ["verify"]
                 );
-                
-                // Export and store private key
-                const privateKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.privateKey);
-                localStorage.setItem('streambot_private_key', JSON.stringify(privateKeyJwk));
-
-                // Export and store public key (as JWK for re-import)
-                const publicKeyJwk = await window.crypto.subtle.exportKey("jwk", keyPair.publicKey);
-                localStorage.setItem('streambot_public_key', JSON.stringify(publicKeyJwk));
-
-                // Export public key (as SPKI for server)
-                const publicKeyDer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
-                publicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyDer)));
-                
-                console.log("[DEBUG] New key pair generated and stored in localStorage.");
-                console.log(`[DEBUG] Generated Public Key (Base64): ${publicKeyB64.substring(0, 40)}...`);
-                return true;
+                console.log("✓ Server public key imported successfully.");
             } catch (error) {
-                console.error("Failed to generate/store keys:", error);
-                return false;
+                console.error("CRITICAL ERROR: Could not load server public key.", error);
+                showMessage("Security error: Could not verify server. Please refresh.", "error");
             }
         }
 
         /**
-         * Loads keys from localStorage, imports them, and sets the global keyPair.
+         * Creates a canonical JSON string from a payload.
          */
-        async function loadKeysFromStorage() {
-            const privateKeyJwkStr = localStorage.getItem('streambot_private_key');
-            const publicKeyJwkStr = localStorage.getItem('streambot_public_key');
-
-            if (privateKeyJwkStr && publicKeyJwkStr) {
-                try {
-                    const privateKeyJwk = JSON.parse(privateKeyJwkStr);
-                    const publicKeyJwk = JSON.parse(publicKeyJwkStr);
-
-                    console.log("[DEBUG] Loading keys from localStorage...");
-                    const privateKey = await window.crypto.subtle.importKey(
-                        "jwk", privateKeyJwk, { name: "RSA-PSS", hash: "SHA-256" }, true, ["sign"]
-                    );
-                    const publicKey = await window.crypto.subtle.importKey(
-                        "jwk", publicKeyJwk, { name: "RSA-PSS", hash: "SHA-256" }, true, ["verify"]
-                    );
-                    
-                    keyPair = { privateKey: privateKey, publicKey: publicKey };
-
-                    // Also re-generate the SPKI/B64 version for handleRegister
-                    const publicKeyDer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
-                    publicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyDer)));
-
-                    console.log("[DEBUG] Keys successfully loaded from localStorage.");
-                    return true;
-                } catch (error) {
-                    console.error("Failed to import keys, clearing storage:", error);
-                    localStorage.removeItem('streambot_private_key');
-                    localStorage.removeItem('streambot_public_key');
-                    return false;
-                }
-            }
-            console.log("[DEBUG] No keys found in localStorage.");
-            return false;
-        }
-        // --- END OF KEY MANAGEMENT FIX ---
-
-
-        async function signPayload(payload) {
-            if (!keyPair) {
-                console.error("Key pair not initialized. User may need to log out and log back in.");
-                throw new Error("Key pair not initialized");
-            }
-
-            // Create a canonical JSON string that matches Python's json.dumps(sort_keys=True, separators=(',',':'))
+        function createCanonicalJSON(payload) {
+            // --- THIS IS THE KEY: Must match Python's json.dumps(sort_keys=True)
             const sortedKeys = Object.keys(payload).sort();
             const parts = sortedKeys.map(key => {
+                // Recursively stringify objects to match Python's behavior
                 const value = JSON.stringify(payload[key]);
                 return `"${key}":${value}`;
             });
-            const payloadString = `{${parts.join(',')}}`;
-            
-            console.log("[DEBUG] Canonical Payload String:", payloadString);
-
-            const encoder = new TextEncoder();
-            const data = encoder.encode(payloadString);
-
-            const signature = await window.crypto.subtle.sign(
-                {
-                    name: "RSA-PSS",
-                    saltLength: 32
-                },
-                keyPair.privateKey,
-                data
-            );
-
-            const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
-            
-            console.log(`[DEBUG] Generated Signature (Base64): ${signatureB64.substring(0, 40)}...`);
-            
-            return signatureB64;
+            // And it must match separators=(',', ':') -> no spaces
+            return `{${parts.join(',')}}`;
         }
+        
+        /**
+         * Verifies a payload against a signature using the server's public key.
+         */
+        async function verifyPayload(payload, signatureB64) {
+            if (!serverPublicKey) {
+                console.error("Server public key not available for verification.");
+                return false;
+            }
+
+            try {
+                // --- ADDED DEBUGGING ---
+                const payloadString = createCanonicalJSON(payload);
+                console.log("[DEBUG] Canonical Payload String for Verification:", payloadString);
+                // --- END DEBUGGING ---
+
+                const data = new TextEncoder().encode(payloadString);
+                const signature = b64ToBuffer(signatureB64);
+
+                const isValid = await window.crypto.subtle.verify(
+                    {
+                        name: "RSA-PSS",
+                        saltLength: 32 // 32 bytes = 256 bits (matches SHA-256 digest size)
+                    },
+                    serverPublicKey,
+                    signature,
+                    data
+                );
+
+                if (!isValid) {
+                     console.error("❌ TAMPERING DETECTED: Server signature verification failed for payload:", payload);
+                }
+                return isValid;
+
+            } catch (error) {
+                console.error("Error during verification:", error, "for payload:", payload);
+                return false;
+            }
+        }
+        // --- END OF CRYPTO LOGIC ---
+
 
         // Check if user is already logged in on page load
         window.onload = async function() {
-            // --- MODIFIED ---
-            // Load keys from storage INSTEAD of generating new ones
-            await loadKeysFromStorage(); 
-            // --- END MODIFIED ---
+            await fetchServerPublicKey();
             
             try {
                 const response = await fetch(`${API_BASE_URL}/api/user`, {
@@ -977,18 +1011,6 @@
         async function handleRegister(event) {
             event.preventDefault();
             
-            // --- MODIFIED ---
-            // Generate and store keys *at registration time*
-            const keysGenerated = await generateAndStoreKeys();
-            
-            if (!keysGenerated || !keyPair || !publicKeyB64) {
-                const errorDiv = document.getElementById('registerError');
-                errorDiv.textContent = 'Failed to generate security keys. Please refresh and try again.';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            // --- END MODIFIED ---
-            
             const name = document.getElementById('registerName').value;
             const email = document.getElementById('registerEmail').value;
             const password = document.getElementById('registerPassword').value;
@@ -1008,13 +1030,12 @@
                     body: JSON.stringify({ 
                         name, 
                         email, 
-                        password,
-                        publicKey: publicKeyB64 // This is now the correct, stored key
+                        password
                     })
                 });
                 const data = await response.json();
                 if (response.ok) {
-                    successDiv.textContent = '✓ Registration successful! Your account is secured with encryption.';
+                    successDiv.textContent = '✓ Registration successful!';
                     successDiv.classList.remove('hidden');
                     document.getElementById('registerFormElement').reset();
                     setTimeout(() => {
@@ -1041,7 +1062,7 @@
                     credentials: 'include'
                 });
                 currentUser = null;
-                currentResults = { smart: null, providers: null, intents: null };
+                currentResults = { smart: null, intents: null, history: null };
                 document.getElementById('resultsArea').innerHTML = `
                     <div class="placeholder-message">
                         <h3>Welcome to StreamBot!</h3>
@@ -1049,15 +1070,8 @@
                     </div>
                 `;
                 
-                // --- MODIFIED ---
-                // Clear the stored keys on logout
-                console.log("[DEBUG] Logging out. Clearing keys from localStorage.");
-                localStorage.removeItem('streambot_private_key');
-                localStorage.removeItem('streambot_public_key');
-                keyPair = null;
-                publicKeyB64 = null;
-                // --- END MODIFIED ---
-
+                console.log("[DEBUG] Logging out.");
+                
                 showLoginForm();
             } catch (error) {
                 console.error('Logout error:', error);
@@ -1074,10 +1088,24 @@
             const tabs = document.querySelectorAll('.tab');
             tabs.forEach(tab => tab.classList.remove('active'));
             event.target.classList.add('active');
-            displayResults(tabName);
+            
+            if (tabName === 'history') {
+                handleShowHistory();
+            } else {
+                displayResults(tabName);
+            }
         }
 
         async function handleSearch() {
+            currentResults.history = null;
+            document.querySelectorAll('.tab').forEach(tab => {
+                if (tab.textContent.includes('Smart Search')) {
+                    tab.classList.add('active');
+                } else {
+                    tab.classList.remove('active');
+                }
+            });
+
             const query = document.getElementById('searchInput').value.trim();
             if (!query) {
                 showMessage('Please enter a search query', 'error');
@@ -1092,12 +1120,12 @@
             try {
                 await Promise.all([
                     fetchSmartSearch(query),
-                    fetchProviders(query),
                     fetchIntents(query)
                 ]);
                 displayResults('smart');
             } catch (error) {
-                showMessage('Error fetching results. Make sure Flask is running on port 5001.', 'error');
+                console.error("Search failed:", error);
+                showMessage(error.message, 'error');
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Search';
@@ -1109,22 +1137,13 @@
                 const response = await fetch(`${API_BASE_URL}/takeQuery?message=${encodeURIComponent(query)}`, {
                     method: 'POST'
                 });
-                currentResults.smart = await response.json();
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "Smart search failed");
+                currentResults.smart = data;
             } catch (error) {
                 console.error('Smart search error:', error);
-                currentResults.smart = { error: error.message };
-            }
-        }
-
-        async function fetchProviders(query) {
-            try {
-                const response = await fetch(`${API_BASE_URL}/findRelevant?message=${encodeURIComponent(query)}`, {
-                    method: 'POST'
-                });
-                currentResults.providers = await response.json();
-            } catch (error) {
-                console.error('Provider search error:', error);
-                currentResults.providers = { error: error.message };
+                currentResults.smart = null;
+                throw error;
             }
         }
 
@@ -1133,29 +1152,56 @@
                 const response = await fetch(`${API_BASE_URL}/getIntent?message=${encodeURIComponent(query)}`, {
                     method: 'POST'
                 });
-                currentResults.intents = await response.json();
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "Intent extraction failed");
+                currentResults.intents = data;
             } catch (error) {
                 console.error('Intent extraction error:', error);
-                currentResults.intents = { error: error.message };
+                currentResults.intents = null;
+                throw error;
+            }
+        }
+
+        async function handleShowHistory() {
+            const resultsArea = document.getElementById('resultsArea');
+            if (currentResults.history) {
+                await displayHistoryResults(resultsArea, currentResults.history);
+                return;
+            }
+
+            resultsArea.innerHTML = `
+                <div class="loading"><div class="spinner"></div><p>Fetching history...</p></div>
+            `;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/history`, {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "Failed to fetch history");
+                
+                currentResults.history = data;
+                await displayHistoryResults(resultsArea, data);
+
+            } catch (error) {
+                console.error("History fetch error:", error);
+                showMessage(error.message, 'error');
             }
         }
 
         function displayResults(type) {
             const resultsArea = document.getElementById('resultsArea');
             if (type === 'smart') displaySmartResults(resultsArea);
-            else if (type === 'providers') displayProviderResults(resultsArea);
             else if (type === 'intents') displayIntentResults(resultsArea);
+            else if (type === 'history') handleShowHistory();
         }
 
         function displaySmartResults(container) {
             if (!currentResults.smart) {
-                container.innerHTML = '<div class="placeholder-message"><p>No results yet</p></div>';
+                container.innerHTML = '<div class="placeholder-message"><p>No results found.</p></div>';
                 return;
             }
-            if (currentResults.smart.error) {
-                container.innerHTML = `<div class="error">${currentResults.smart.error}</div>`;
-                return;
-            }
+            
             let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🎯 Personalized Results</h3>';
             if (Array.isArray(currentResults.smart)) {
                 currentResults.smart.forEach(contentObj => {
@@ -1169,37 +1215,12 @@
             container.innerHTML = html;
         }
 
-        function displayProviderResults(container) {
-            if (!currentResults.providers) {
-                container.innerHTML = '<div class="placeholder-message"><p>No results yet</p></div>';
-                return;
-            }
-            if (currentResults.providers.error) {
-                container.innerHTML = `<div class="error">${currentResults.providers.error}</div>`;
-                return;
-            }
-            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">All Available Providers</h3>';
-            if (Array.isArray(currentResults.providers)) {
-                currentResults.providers.forEach(contentObj => {
-                    for (const [contentName, providers] of Object.entries(contentObj)) {
-                        html += createContentCard(contentName, providers);
-                    }
-                });
-            } else {
-                html += '<p>No results found</p>';
-            }
-            container.innerHTML = html;
-        }
-
         function displayIntentResults(container) {
             if (!currentResults.intents) {
-                container.innerHTML = '<div class="placeholder-message"><p>No results yet</p></div>';
+                container.innerHTML = '<div class="placeholder-message"><p>No intents found.</p></div>';
                 return;
             }
-            if (currentResults.intents.error) {
-                container.innerHTML = `<div class="error">${currentResults.intents.error}</div>`;
-                return;
-            }
+
             let html = '<h3 style="margin-bottom: 15px; color: #667eea;">Extracted Preferences</h3>';
             if (currentResults.intents.movie) {
                 html += `<div class="intent-display"><h4>🎬 Content</h4><div class="intent-item"><strong>${currentResults.intents.movie}</strong></div></div>`;
@@ -1215,6 +1236,52 @@
             container.innerHTML = html;
         }
 
+        // --- THIS IS THE CORRECTED FUNCTION ---
+        async function displayHistoryResults(container, transactions) {
+            if (!transactions || transactions.length === 0) {
+                container.innerHTML = '<div class="placeholder-message"><p>No viewing history found.</p></div>';
+                return;
+            }
+
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🕒 Verified Viewing History</h3>';
+            
+            transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            for (const item of transactions) {
+                
+                // 1. Manually reconstruct the payload, ENSURING correct data types
+                const payload = {
+                    action: item.action,
+                    movie_title: item.movie_title,
+                    provider: item.provider,
+                    // --- THIS IS THE FIX ---
+                    // Convert the string from the DB back to a float
+                    quality: parseFloat(item.quality) 
+                };
+                
+                // 2. Verify this reconstructed payload against the signature
+                const isValid = await verifyPayload(payload, item.signature);
+
+                // 3. Render based on validity
+                const timestamp = new Date(item.timestamp).toLocaleString();
+                
+                html += `
+                    <div class="history-item">
+                        <div class="history-details">
+                            <h4>${item.movie_title}</h4>
+                            <p>on ${item.provider} at ${timestamp}</p>
+                        </div>
+                        ${isValid 
+                            ? '<div class="history-badge verified">✓ Verified</div>'
+                            : '<div class="history-badge tampered">❌ Tampered</div>'
+                        }
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+
         function createContentCard(contentName, providers) {
             let html = `<div class="content-card">
                 <div class="content-title">${contentName}</div>`;
@@ -1225,7 +1292,6 @@
                 const safeContent = contentName.replace(/'/g, "\\'");
                 const safeProvider = providerName.replace(/'/g, "\\'");
                 html += `
-                    <!-- THIS ONCLICK HAS BEEN CHANGED -->
                     <div class="provider-item" onclick="showConfirmationPopup('${safeContent}', '${safeProvider}', ${similarity})">
                         <div class="provider-name">
                             <div class="rank-badge">${index + 1}</div>
@@ -1240,88 +1306,68 @@
             return html;
         }
 
-        // --- NEW FUNCTION ---
-        // Shows the modal and stores the selection
         function showConfirmationPopup(content, provider, similarity) {
-            // Store current selection
             selectedContent = content;
             selectedProvider = provider;
             selectedSimilarity = similarity;
             
-            // Update modal text
             document.getElementById('confirmMovieTitle').textContent = content;
             document.getElementById('confirmProviderName').textContent = provider;
             
-            // Reset modal state
             document.getElementById('modalMessage').innerHTML = '';
             document.getElementById('btnConfirmService').disabled = false;
             document.getElementById('btnConfirmService').textContent = 'Confirm & Play';
             
-            // Show modal and blur background
             document.getElementById('confirmModal').classList.remove('hidden');
             document.getElementById('mainApp').style.filter = 'blur(5px)';
         }
 
-        // --- NEW FUNCTION ---
-        // Hides the modal
         function closeConfirmationPopup() {
             document.getElementById('confirmModal').classList.add('hidden');
             document.getElementById('mainApp').style.filter = 'none';
         }
 
-        // --- NEW FUNCTION ---
-        // Called by the "Confirm" button
         async function handleConfirmService() {
             const btn = document.getElementById('btnConfirmService');
             const msgDiv = document.getElementById('modalMessage');
 
             btn.disabled = true;
-            btn.textContent = 'Verifying...';
+            btn.textContent = 'Confirming...';
             msgDiv.innerHTML = '';
 
             try {
-                // 1. Create the payload
                 const payload = {
                     action: 'watch',
                     movie_title: selectedContent,
                     provider: selectedProvider,
-                    quality: parseFloat(selectedSimilarity.toFixed(4)) // Use 4 decimal places for precision
+                    quality: parseFloat(selectedSimilarity.toFixed(4))
                 };
                 
-                console.log("[DEBUG] Sending Payload to API:", payload);
+                console.log("[DEBUG] Sending payload to server for logging:", payload);
 
-                // 2. Sign the payload
-                const signature = await signPayload(payload);
-
-                // 3. Call the confirmation API
                 const response = await fetch(`${API_BASE_URL}/api/confirm_service`, {
                     method: 'POST',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
-                        payload: payload, 
-                        signature: signature 
+                        payload: payload
                     })
                 });
 
                 const data = await response.json();
+                if (!response.ok) throw new Error(data.message || "Confirmation failed");
+                
+                currentResults.history = null; // Invalidate history cache
 
-                if (response.ok) {
-                    // 4. On SUCCESS, show success and navigate
-                    msgDiv.className = 'modal-message success';
-                    msgDiv.textContent = `✓ ${data.message}`;
-                    
-                    console.log("[DEBUG] Signature VERIFIED by backend.");
+                msgDiv.className = 'modal-message success';
+                msgDiv.textContent = `✓ ${data.message}`;
+                
+                console.log("[DEBUG] Server confirmed and logged the action.");
 
-                    setTimeout(() => {
-                        closeConfirmationPopup();
-                        navigateToVideoPlayer(); // Go to video player
-                    }, 1000);
-
-                } else {
-                    // 5. On FAILURE, show error
-                    throw new Error(data.message || "Verification failed");
-                }
+                setTimeout(() => {
+                    closeConfirmationPopup();
+                    navigateToVideoPlayer();
+                }, 1000);
 
             } catch (error) {
                 console.error("Confirmation error:", error);
@@ -1332,30 +1378,23 @@
             }
         }
 
-        // --- RENAMED & MODIFIED ---
-        // This function now *only* handles the navigation
         function navigateToVideoPlayer() {
-            // Update video player info
             document.getElementById('videoTitle').textContent = selectedContent;
             document.getElementById('videoProvider').textContent = `${selectedProvider} • ${(selectedSimilarity * 100).toFixed(1)}% Match`;
             
-            // Show video player page
             document.getElementById('videoPlayerPage').classList.remove('hidden');
             document.getElementById('mainApp').classList.add('hidden');
             
-            // Reset and play video
             const videoElement = document.getElementById('videoElement');
             videoElement.load();
             videoElement.play();
         }
 
         function closeVideoPlayer() {
-            // Hide video player
             document.getElementById('videoPlayerPage').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             document.getElementById('mainApp').style.filter = 'none';
             
-            // Pause video
             const videoElement = document.getElementById('videoElement');
             videoElement.pause();
         }
@@ -1367,3 +1406,4 @@
     </script>
 </body>
 </html>
+
