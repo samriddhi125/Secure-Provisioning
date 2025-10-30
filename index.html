@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StreamBot - AI Streaming Assistant</title>
     <style>
-        /* --- CSS is unchanged --- */
         * {
             margin: 0;
             padding: 0;
@@ -662,6 +661,132 @@
                 padding: 10px 15px;
             }
         }
+        /* Payment Modal Styles */
+        .payment-modal-content {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .payment-modal-content h2 {
+            color: #2ecc71;
+            margin-bottom: 25px;
+            font-size: 24px;
+            text-align: center;
+        }
+
+        .payment-details {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+        }
+
+        .payment-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            font-size: 15px;
+        }
+
+        .payment-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .payment-value {
+            color: #333;
+            font-weight: 600;
+            text-align: right;
+        }
+
+        .payment-divider {
+            height: 1px;
+            background: #667eea;
+            margin: 15px 0;
+        }
+
+        .payment-total {
+            padding-top: 15px;
+            font-size: 17px;
+        }
+
+        .total-amount {
+            color: #2ecc71;
+            font-size: 20px;
+        }
+
+        .payment-methods-section {
+            margin-bottom: 25px;
+        }
+
+        .payment-methods-section h3 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .payment-methods {
+            display: flex;
+            gap: 10px;
+        }
+
+        .payment-method-btn {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            background: white;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .payment-method-btn:hover {
+            border-color: #667eea;
+            background: #f8f9fa;
+        }
+
+        .payment-method-btn.active {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .payment-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .btn-pay {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            font-size: 16px;
+            padding: 14px;
+        }
+
+        .btn-pay:hover {
+            box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4);
+        }
+
+        .btn-cancel-payment {
+            background: #95a5a6;
+            font-size: 14px;
+            padding: 12px;
+        }
+
+        .btn-cancel-payment:hover {
+            background: #7f8c8d;
+            box-shadow: none;
+            transform: none;
+        }
     </style>
 </head>
 <body>
@@ -669,7 +794,7 @@
     <div id="loginForm" class="container">
         <div class="card">
             <div class="logo">
-                <h1>🎬 StreamBot</h1>
+                <h1>StreamBot</h1>
                 <p>Your AI-Powered Content Discovery Assistant</p>
             </div>
             <div id="loginError" class="error hidden"></div>
@@ -694,7 +819,7 @@
     <div id="registerForm" class="container hidden">
         <div class="card">
             <div class="logo">
-                <h1>🎬 StreamBot</h1>
+                <h1>StreamBot</h1>
                 <p>Create Your Account</p>
                 <div class="security-badge">Secure Server-Side Logging</div>
             </div>
@@ -746,9 +871,9 @@
                     <button class="btn-search" id="searchBtn" onclick="handleSearch()">Search</button>
                 </div>
                 <div class="tabs">
-                    <button class="tab active" onclick="switchTab(event, 'smart')">🎯 Smart Search</button>
-                    <button class="tab" onclick="switchTab(event, 'intents')">🧠 Intents</button>
-                    <button class="tab" onclick="switchTab(event, 'history')">🕒 History</button>
+                    <button class="tab active" onclick="switchTab(event, 'smart')">Smart Search</button>
+                    <button class="tab" onclick="switchTab(event, 'intents')">Intents</button>
+                    <button class="tab" onclick="switchTab(event, 'history')">History</button>
                 </div>
             </div>
             <div class="results-area" id="resultsArea">
@@ -778,7 +903,7 @@
         <div class="video-container">
             <div class="video-wrapper">
                 <video id="videoElement" controls>
-                    <source src="videoplayback.mp4" type="video/mp4">
+                    <source src="CA3 Demo/videoplayback.mp4" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
             </div>
@@ -809,6 +934,66 @@
         </div>
     </div>
 
+    <!-- Payment Modal -->
+    <div id="paymentModal" class="modal-overlay hidden">
+        <div class="payment-modal-content">
+            <h2>Complete Payment</h2>
+            
+            <div class="payment-details">
+                <div class="payment-row">
+                    <span class="payment-label">Content</span>
+                    <span class="payment-value" id="paymentContent">Movie Name</span>
+                </div>
+                
+                <div class="payment-row">
+                    <span class="payment-label">Provider</span>
+                    <span class="payment-value" id="paymentProvider">Provider Name</span>
+                </div>
+                
+                <div class="payment-row">
+                    <span class="payment-label">Base Price</span>
+                    <span class="payment-value" id="paymentBasePrice">₹20.00</span>
+                </div>
+                
+                <div class="payment-row">
+                    <span class="payment-label">Platform Fee</span>
+                    <span class="payment-value" id="paymentPlatformFee">₹2.00</span>
+                </div>
+                
+                <div class="payment-divider"></div>
+                
+                <div class="payment-row payment-total">
+                    <span class="payment-label">Total Amount</span>
+                    <span class="payment-value total-amount" id="paymentTotal">₹22.00</span>
+                </div>
+            </div>
+            
+            <div class="payment-methods-section">
+                <h3>Select Payment Method</h3>
+                <div class="payment-methods">
+                    <button class="payment-method-btn active" data-method="card">
+                        Card
+                    </button>
+                    <button class="payment-method-btn" data-method="upi">
+                        UPI
+                    </button>
+                    <button class="payment-method-btn" data-method="wallet">
+                        Wallet
+                    </button>
+                </div>
+            </div>
+            
+            <div class="payment-actions">
+                <button class="btn btn-pay" id="btnPay" onclick="processPaymentFromModal()">
+                    Pay <span id="payButtonAmount">₹22.00</span>
+                </button>
+                <button class="btn btn-cancel-payment" onclick="closePaymentModal()">Cancel</button>
+            </div>
+            
+            <div id="paymentMessage" class="modal-message"></div>
+        </div>
+    </div>
+
     <script>
         const API_BASE_URL = '';
         let currentUser = null;
@@ -816,6 +1001,7 @@
         let selectedProvider = null;
         let selectedContent = null;
         let selectedSimilarity = null;
+        let selectedProviderVector = null;
         
         // --- CLIENT-SIDE CRYPTO (for VERIFICATION) ---
         let serverPublicKey = null;
@@ -915,7 +1101,7 @@
                 );
 
                 if (!isValid) {
-                     console.error("❌ TAMPERING DETECTED: Server signature verification failed for payload:", payload);
+                     console.error("TAMPERING DETECTED: Server signature verification failed for payload:", payload);
                 }
                 return isValid;
 
@@ -1243,7 +1429,7 @@
                 return;
             }
 
-            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🕒 Verified Viewing History</h3>';
+            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">Verified Viewing History</h3>';
             
             transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
@@ -1273,7 +1459,7 @@
                         </div>
                         ${isValid 
                             ? '<div class="history-badge verified">✓ Verified</div>'
-                            : '<div class="history-badge tampered">❌ Tampered</div>'
+                            : '<div class="history-badge tampered">Tampered</div>'
                         }
                     </div>
                 `;
@@ -1281,6 +1467,155 @@
             container.innerHTML = html;
         }
 
+        // --- THIS IS THE CORRECTED FUNCTION ---
+        async function showPaymentModal() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/get_pending_bill`, {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || 'Failed to fetch billing information');
+                }
+
+                const bill = await response.json();
+                
+                // Populate payment modal with bill details
+                document.getElementById('paymentContent').textContent = bill.content || selectedContent;
+                document.getElementById('paymentProvider').textContent = bill.provider || selectedProvider; 
+                
+                // Update pricing
+                document.getElementById('paymentBasePrice').textContent = `₹${bill.base_price.toFixed(2)}`;
+                document.getElementById('paymentPlatformFee').textContent = `₹${bill.platform_fee.toFixed(2)}`;
+                document.getElementById('paymentTotal').textContent = `₹${bill.total_price.toFixed(2)}`;
+                document.getElementById('payButtonAmount').textContent = `₹${bill.total_price.toFixed(2)}`;
+                
+                // Store billing ID for payment processing
+                window.currentBillingId = bill.billing_id;
+                
+                // Show the payment modal
+                document.getElementById('paymentModal').classList.remove('hidden');
+                document.getElementById('paymentMessage').textContent = '';
+                document.getElementById('mainApp').style.filter = 'blur(5px)';
+                
+            } catch (error) {
+                console.error('Error loading payment:', error);
+                // Show this error to the user in the main app, as the modal isn't open
+                showMessage(`Error loading payment: ${error.message}`, 'error');
+                closeConfirmationPopup(); // Close the previous modal
+            }
+        }
+
+        // Handles the "Pay" button click in the payment modal
+        async function processPaymentFromModal() {
+            const btn = document.getElementById('btnPay');
+            const msgDiv = document.getElementById('paymentMessage');
+            const billingId = window.currentBillingId;
+
+            if (!billingId) {
+                msgDiv.className = 'modal-message error';
+                msgDiv.textContent = 'Error: No billing ID found. Please try again.';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+            msgDiv.innerHTML = '';
+
+            try {
+                // Find the selected payment method
+                const selectedMethodEl = document.querySelector('.payment-method-btn.active');
+                const paymentMethod = selectedMethodEl ? selectedMethodEl.dataset.method : 'card';
+                
+                // Pass billingId and method to the processing function
+                await processPayment(billingId, paymentMethod); 
+                
+                // If processPayment succeeds, it calls navigateToVideoPlayer.
+                // We just need to show success and close the modal.
+                msgDiv.className = 'modal-message success';
+                msgDiv.textContent = '✓ Payment Successful! Starting video...';
+                
+                setTimeout(() => {
+                     closePaymentModal();
+                     // navigateToVideoPlayer() is called inside processPayment
+                }, 1000);
+
+            } catch (error) {
+                console.error("Payment error:", error);
+                msgDiv.className = 'modal-message error';
+                msgDiv.textContent = `${error.message}`;
+                btn.disabled = false;
+                btn.textContent = 'Pay ' + document.getElementById('payButtonAmount').textContent;
+            }
+        }
+
+        // Closes the payment modal
+        function closePaymentModal() {
+            document.getElementById('paymentModal').classList.add('hidden');
+            document.getElementById('mainApp').style.filter = 'none';
+        }
+
+        // --- REPLACE your old 'processPayment' function with this one ---
+        async function processPayment(billingId, paymentMethod = 'card') { // Added paymentMethod param
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/process_payment`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        billing_id: billingId,
+                        payment_method: paymentMethod // Use the param
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    console.log("✓ Payment successful:", data);
+                    navigateToVideoPlayer(); // This is the correct flow
+                } else {
+                    throw new Error(data.error || 'Payment failed');
+                }
+            } catch (error) {
+                console.error('Payment error:', error);
+                // Re-throw the error so processPaymentFromModal can catch it
+                throw error; 
+            }
+        }
+
+        // --- REPLACE your old 'window.onload' function with this one ---
+        window.onload = async function() {
+            await fetchServerPublicKey();
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/user`, {
+                    credentials: 'include'
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    showMainApp(data);
+                }
+            } catch (error) {
+                console.error('Auth check error:', error);
+            }
+
+            // --- ADDED THIS SECTION ---
+            // Add click handler for payment method buttons
+            const paymentMethodsContainer = document.querySelector('.payment-methods');
+            if (paymentMethodsContainer) {
+                paymentMethodsContainer.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('payment-method-btn')) {
+                        // Remove active class from all siblings
+                        document.querySelectorAll('.payment-method-btn').forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                        // Add active class to the clicked button
+                        e.target.classList.add('active');
+                    }
+                });
+            }
+        }
 
         function createContentCard(contentName, providers) {
             let html = `<div class="content-card">
@@ -1291,6 +1626,13 @@
                 const percentage = (similarity * 100).toFixed(1);
                 const safeContent = contentName.replace(/'/g, "\\'");
                 const safeProvider = providerName.replace(/'/g, "\\'");
+                let providerVector = null;
+                if (currentResults.smart) {
+                    // Search through raw results to find this provider's vector
+                    const rawQuery = document.getElementById('searchInput').value.trim();
+                    // We'll need to get this from the backend, so pass null for now and we'll fetch it in the confirmation step
+                }
+
                 html += `
                     <div class="provider-item" onclick="showConfirmationPopup('${safeContent}', '${safeProvider}', ${similarity})">
                         <div class="provider-name">
@@ -1306,10 +1648,37 @@
             return html;
         }
 
-        function showConfirmationPopup(content, provider, similarity) {
+        async function showConfirmationPopup(content, provider, similarity) {
             selectedContent = content;
             selectedProvider = provider;
             selectedSimilarity = similarity;
+
+            try {
+                const query = document.getElementById('searchInput').value.trim();
+                const response = await fetch(`${API_BASE_URL}/fetch?query=${encodeURIComponent(content)}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                const results = JSON.parse(data);
+                
+                // Find the specific provider's vector
+                if (results[content]) {
+                    const providerData = results[content].find(p => p.provider === provider);
+                    if (providerData) {
+                        selectedProviderVector = [
+                            providerData.resolution,
+                            providerData.frame_rate,
+                            providerData.region_latency,
+                            providerData.adaptive_streaming,
+                            providerData.buffer_strategy
+                        ];
+                        console.log("[DEBUG] Provider quality vector:", selectedProviderVector);
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching provider vector:", error);
+                selectedProviderVector = null;
+            }
             
             document.getElementById('confirmMovieTitle').textContent = content;
             document.getElementById('confirmProviderName').textContent = provider;
@@ -1340,10 +1709,12 @@
                     action: 'watch',
                     movie_title: selectedContent,
                     provider: selectedProvider,
-                    quality: parseFloat(selectedSimilarity.toFixed(4))
+                    quality: parseFloat(selectedSimilarity.toFixed(4)),
+                    quality_vector: selectedProviderVector 
                 };
                 
                 console.log("[DEBUG] Sending payload to server for logging:", payload);
+                console.log("[DEBUG] Provider's quality vector:", selectedProviderVector);
 
                 const response = await fetch(`${API_BASE_URL}/api/confirm_service`, {
                     method: 'POST',
@@ -1361,18 +1732,23 @@
 
                 msgDiv.className = 'modal-message success';
                 msgDiv.textContent = `✓ ${data.message}`;
-                
+
                 console.log("[DEBUG] Server confirmed and logged the action.");
 
-                setTimeout(() => {
+                // Show billing info
+                if (data.billing_info) {
+                    console.log("[BILLING] Price: ₹" + data.billing_info.total_price);
+                }
+
+                setTimeout(async () => {
                     closeConfirmationPopup();
-                    navigateToVideoPlayer();
+                    await showPaymentModal();
                 }, 1000);
 
             } catch (error) {
                 console.error("Confirmation error:", error);
                 msgDiv.className = 'modal-message error';
-                msgDiv.textContent = `❌ ${error.message}`;
+                msgDiv.textContent = `${error.message}`;
                 btn.disabled = false;
                 btn.textContent = 'Confirm & Play';
             }

@@ -27,12 +27,27 @@ app.config['SESSION_TYPE'] = 'filesystem'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 # Enable CORS with credentials
-CORS(app, supports_credentials=True, origins=['http://127.0.0.1:*', 'http://localhost:*'])
+# In app.py, replace the CORS line with:
+CORS(app, 
+     supports_credentials=True, 
+     origins=['http://127.0.0.1:5001', 'http://localhost:5001'],
+     allow_headers=['Content-Type'],
+     methods=['GET', 'POST', 'OPTIONS'])
 
 # Initialize components
 retriever = RetrieveProviders()
 db = TransactionDatabase("transactions.db")
 intentExtractor = IntentExtractor()
+
+# Billing Configuration
+PLATFORM_FEE = 2.5  # Rupees
+MIN_BASE_PRICE = 5.0  # Minimum price for lowest quality
+MAX_BASE_PRICE = 40.0  # Maximum price for highest quality
+
+# Quality vector bounds (based on your provider data structure)
+# [resolution, frame_rate, region_latency, adaptive_streaming, buffer_strategy]
+MIN_VECTOR_SUM = 0.0  # Theoretical minimum (all zeros)
+MAX_VECTOR_SUM = 15.0  # Theoretical maximum (4+4+3+2+2)
 
 # --- SERVER-SIDE KEY MANAGEMENT (MODIFIED) ---
 server_private_key = None
@@ -60,11 +75,11 @@ def load_or_generate_server_keys():
             
             print("✓ Server keys loaded successfully.")
         except Exception as e:
-            print(f"❌ FAILED TO LOAD KEYS: {e}")
+            print(f"FAILED TO LOAD KEYS: {e}")
             print("Please check your environment variables. Exiting.")
             exit(1)
     else:
-        print("⚠️ Server keys not found in environment. Generating new keys...")
+        print("Server keys not found in environment. Generating new keys...")
         private_key = rsa.generate_private_key(
             public_exponent=65537,
             key_size=2048
@@ -85,7 +100,7 @@ def load_or_generate_server_keys():
         pub_key_b64_str = base64.b64encode(public_key_pem).decode('utf-8')
 
         print("\n" + "="*80)
-        print("‼️ PLEASE SET THESE ENVIRONMENT VARIABLES FOR YOUR SERVER ‼️")
+        print("PLEASE SET THESE ENVIRONMENT VARIABLES FOR YOUR SERVER ‼️")
         print("\n--- SET `SERVER_PRIVATE_KEY` to this value: ---")
         print(priv_key_b64_str)
         print("\n--- SET `SERVER_PUBLIC_KEY` to this value: ---")
@@ -116,30 +131,56 @@ def sign_payload(payload):
 # ============= DATABASE INITIALIZATION (MODIFIED) =============
 
 def init_db():
-    """Initialize database, add signature column, and remove old user publicKey column."""
+    """Initialize database - just verify schema is correct."""
     try:
         with TransactionDatabase("transactions.db") as db_conn:
             print("✓ Database connection successful.")
             cursor = db_conn.cursor
             
-            # 1. Add 'signature' column to transactions table if it doesn't exist
+            # Verify signature column exists in transactions
             cursor.execute("PRAGMA table_info(transactions)")
             trans_columns = [col[1] for col in cursor.fetchall()]
+            
             if 'signature' not in trans_columns:
                 print("Adding signature column to transactions table...")
                 cursor.execute("ALTER TABLE transactions ADD COLUMN signature TEXT")
                 db_conn.conn.commit()
                 print("✓ signature column added successfully")
 
-            # 2. Clean up: Drop the 'publicKey' column from 'users' table if it exists
+            # CREATE BILLING TABLE - MOVED OUTSIDE THE CONDITIONAL
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS billing (
+                    billing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    transaction_id INTEGER,
+                    content_name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    quality_score REAL NOT NULL,
+                    quality_vector TEXT,
+                    vector_sum REAL,
+                    base_price REAL NOT NULL,
+                    platform_fee REAL NOT NULL,
+                    total_price REAL NOT NULL,
+                    payment_status TEXT DEFAULT 'pending',
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id),
+                    FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id)
+                )
+            """)
+            db_conn.conn.commit()
+            print("✓ Billing table verified/created.")
+            
+            # Verify users table doesn't have publicKey
             cursor.execute("PRAGMA table_info(users)")
             user_columns = [col[1] for col in cursor.fetchall()]
+            
             if 'publicKey' in user_columns:
-                print("Dropping legacy 'publicKey' column from 'users' table...")
-                # Note: Dropping columns in SQLite is complex. We create a new table.
-                # This is safe *only* because we're just starting development.
+                print("Removing legacy 'publicKey' column from 'users' table...")
+                
+                # Create clean users table
                 cursor.execute("PRAGMA foreign_keys=off")
                 cursor.execute("BEGIN TRANSACTION")
+                
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS users_new (
                         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,28 +191,73 @@ def init_db():
                         password TEXT NOT NULL
                     )
                 """)
+                
                 cursor.execute("""
                     INSERT INTO users_new (user_id, name, phone_no, email, age, password)
                     SELECT user_id, name, phone_no, email, age, password FROM users
                 """)
+                
                 cursor.execute("DROP TABLE users")
                 cursor.execute("ALTER TABLE users_new RENAME TO users")
                 cursor.execute("COMMIT")
                 cursor.execute("PRAGMA foreign_keys=on")
                 print("✓ 'publicKey' column removed successfully.")
             
-            print("✓ Database initialized and schema cleaned.")
+            print("✓ Database schema verified and cleaned. Billing added.")
+            
     except Exception as e:
         print(f"Database initialization error: {e}")
         import traceback
         traceback.print_exc()
+
+# ============= BILLING FUNCTIONS =============
+
+def calculate_billing(quality_score, provider_quality_vector=None):
+    """
+    Calculate billing based on provider quality vector sum.
+    
+    Args:
+        quality_score: Similarity score (0.0 to 1.0) - kept for compatibility
+        provider_quality_vector: List of [resolution, frame_rate, region_latency, 
+                                          adaptive_streaming, buffer_strategy]
+    
+    Returns:
+        Dictionary with billing information
+    """
+    if provider_quality_vector:
+        # Sum all quality metrics
+        vector_sum = sum(provider_quality_vector)
+        
+        # Normalize to 0-1 range
+        normalized_score = (vector_sum - MIN_VECTOR_SUM) / (MAX_VECTOR_SUM - MIN_VECTOR_SUM)
+        normalized_score = max(0.0, min(1.0, normalized_score))  # Clamp to [0, 1]
+        
+        # Linear interpolation between min and max price
+        base_price = MIN_BASE_PRICE + (normalized_score * (MAX_BASE_PRICE - MIN_BASE_PRICE))
+    else:
+        # Fallback: use quality_score directly
+        normalized_score = quality_score
+        base_price = MIN_BASE_PRICE + (quality_score * (MAX_BASE_PRICE - MIN_BASE_PRICE))
+    
+    # Round to 2 decimal places
+    base_price = round(base_price, 2)
+    total_price = round(base_price + PLATFORM_FEE, 2)
+    
+    return {
+        'vector_sum': sum(provider_quality_vector) if provider_quality_vector else None,
+        'normalized_score': round(normalized_score, 2),
+        'base_price': base_price,
+        'platform_fee': PLATFORM_FEE,
+        'total_price': total_price,
+        'quality_score': quality_score
+    }
 
 # ============= FRONTEND ROUTE =============
 
 @app.route('/')
 def serve_index():
     """Serves the index.html file."""
-    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index-dev.html')
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index.html')
 
 # ============= AUTHENTICATION ENDPOINTS (MODIFIED) =============
 
@@ -309,10 +395,25 @@ def confirm_service():
         print("✅ [BACKEND LOG] Payload signed successfully.")
         print(f"[DEBUG] Storing Signature: {signature_b64[:30]}...")
         
+        # Calculate billing with quality vector
+        quality_score = float(payload.get('quality', 0))
+        quality_vector = payload.get('quality_vector')  # New field
+
+        billing_info = calculate_billing(quality_score, quality_vector)
+
+        print(f"✓ [BILLING] Calculated billing:")
+        print(f"   Quality Vector: {quality_vector}")
+        print(f"   Vector Sum: {billing_info.get('vector_sum')}")
+        print(f"   Normalized Score: {billing_info['normalized_score']}")
+        print(f"   Base Price: ₹{billing_info['base_price']}")
+        print(f"   Platform Fee: ₹{billing_info['platform_fee']}")
+        print(f"   Total: ₹{billing_info['total_price']}")
+        
         try:
             with TransactionDatabase("transactions.db") as db_conn:
                 user_id = session['user_id']
-                db_conn.cursor.execute(
+                cursor = db_conn.cursor
+                cursor.execute(
                     """INSERT INTO transactions 
                        (user_id, action, movie_title, provider, quality, timestamp, signature) 
                        VALUES (?, ?, ?, ?, ?, datetime('now'), ?)""",
@@ -324,14 +425,48 @@ def confirm_service():
                      signature_b64
                     )
                 )
+
+                transaction_id = cursor.lastrowid
+                
+                # Store billing record
+                cursor.execute(
+                    """INSERT INTO billing 
+                       (user_id, transaction_id, content_name, provider, quality_score, 
+                        quality_vector, vector_sum, base_price, platform_fee, total_price, 
+                        payment_status) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                    (user_id, transaction_id, 
+                     payload.get('movie_title', 'unknown'),
+                     payload.get('provider', 'unknown'),
+                     quality_score,
+                     json.dumps(quality_vector) if quality_vector else None,
+                     billing_info.get('vector_sum'),
+                     billing_info['base_price'],
+                     billing_info['platform_fee'],
+                     billing_info['total_price'])
+                )
+                billing_id = cursor.lastrowid
+
                 db_conn.conn.commit()
                 print("[BACKEND LOG] Transaction and signature logged successfully")
+                print(f"✓ [BILLING] Billing record created with ID: {billing_id}")
+                
+                # Store billing_id in session for payment
+                session['pending_billing_id'] = billing_id
         except Exception as log_error:
             print(f"⚠️ [BACKEND LOG] Failed to log transaction: {log_error}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to create billing: {str(log_error)}"
+            }), 500
         
         return jsonify({
             "status": "success",
-            "message": "Service action confirmed and logged by server."
+            "message": "Service action confirmed and logged by server.",
+            "billing_id": billing_id,
+            "billing_info": billing_info
         }), 200
 
     except Exception as e:
@@ -368,7 +503,109 @@ def get_history():
         print(f"❌ [BACKEND LOG] Error fetching history: {e}")
         return jsonify({"error": "Could not retrieve history"}), 500
 
+# --- NEW BILLING ENDPOINTS ---
 
+@app.route('/api/get_pending_bill', methods=['GET'])
+def get_pending_bill():
+    """Get most recent pending billing information for current user."""
+    print("\n" + "="*50)
+    print("DEBUG: /api/get_pending_bill called")
+    print("="*50)
+
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    try:
+        with TransactionDatabase("transactions.db") as db_conn:
+            cursor = db_conn.cursor
+            bill = cursor.execute(
+                """SELECT * FROM billing 
+                   WHERE user_id = ? AND payment_status = 'pending'
+                   ORDER BY timestamp DESC
+                   LIMIT 1""",
+                (session['user_id'],)
+            ).fetchone()
+            
+            if not bill:
+                return jsonify({"error": "No pending bill found"}), 404
+            
+            return jsonify(dict(bill)), 200
+    except Exception as e:
+        print(f"Error fetching bill: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/process_payment', methods=['POST'])
+def process_payment():
+    """Process payment for pending bill."""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    data = request.get_json()
+    billing_id = data.get('billing_id')
+    payment_method = data.get('payment_method', 'card')
+    
+    if not billing_id:
+        return jsonify({"error": "Billing ID required"}), 400
+    
+    try:
+        with TransactionDatabase("transactions.db") as db_conn:
+            cursor = db_conn.cursor
+            
+            bill = cursor.execute(
+                """SELECT * FROM billing 
+                   WHERE billing_id = ? AND user_id = ? AND payment_status = 'pending'""",
+                (billing_id, session['user_id'])
+            ).fetchone()
+            
+            if not bill:
+                return jsonify({"error": "Invalid or already paid bill"}), 404
+            
+            # Simulate payment processing
+            cursor.execute(
+                """UPDATE billing SET payment_status = 'completed' 
+                   WHERE billing_id = ?""",
+                (billing_id,)
+            )
+            db_conn.conn.commit()
+            
+            session.pop('pending_billing_id', None)
+            
+            print(f"[BILLING] Payment processed for billing_id: {billing_id}")
+            
+            return jsonify({
+                "status": "success",
+                "message": "Payment processed successfully",
+                "billing_id": billing_id,
+                "amount_paid": bill['total_price']
+            }), 200
+            
+    except Exception as e:
+        print(f"Payment processing error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/billing_history', methods=['GET'])
+def billing_history():
+    """Get billing history for current user."""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    try:
+        with TransactionDatabase("transactions.db") as db_conn:
+            cursor = db_conn.cursor
+            bills = cursor.execute(
+                """SELECT * FROM billing 
+                   WHERE user_id = ? 
+                   ORDER BY timestamp DESC""",
+                (session['user_id'],)
+            ).fetchall()
+            
+            return jsonify([dict(bill) for bill in bills]), 200
+    except Exception as e:
+        print(f"Error fetching billing history: {e}")
+        return jsonify({"error": str(e)}), 500
+    
 # ============= HELPER FUNCTIONS =============
 # ... (cosine_similarity, searcher, intent_helper, find_relevant_helper are all unchanged) ...
 def cosine_similarity(a, b):
