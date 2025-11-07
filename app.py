@@ -103,24 +103,78 @@ def load_or_generate_server_keys():
         print("Server will exit. Please set the variables and restart.")
         exit(0)
 
-def sign_payload(payload):
+def sign_payload(payload, time_it=False):
     """Signs a JSON payload with the server's private key."""
     if not server_private_key:
         raise Exception("Server private key is not loaded.")
     
+    # --- [TIMING START] Payload Prep ---
+    start_prep = time.time()
     payload_string = json.dumps(payload, sort_keys=True, separators=(',', ':'))
     payload_bytes = payload_string.encode('utf-8')
+    end_prep = time.time()
+    # --- [TIMING END] Payload Prep ---
     
+    # --- [TIMING START] Hashing (Standalone) ---
+    start_hash = time.time()
+    digest = hashes.Hash(hashes.SHA256())
+    digest.update(payload_bytes)
+    payload_hash = digest.finalize() # Not used in sign, just for timing
+    end_hash = time.time()
+    # --- [TIMING END] Hashing ---
+
+    # --- [TIMING START] Signing ---
+    start_sign = time.time()
     signature = server_private_key.sign(
-        payload_bytes,
+        payload_bytes, # Sign uses the *full* payload bytes, not the hash
         padding.PSS(
             mgf=padding.MGF1(hashes.SHA256()),
             salt_length=hashes.SHA256.digest_size
         ),
-        hashes.SHA256()
+        hashes.SHA256() # This tells .sign() to use SHA256
     )
+    end_sign = time.time()
+    # --- [TIMING END] Signing ---
+
+    signature_b64 = base64.b64encode(signature).decode('utf-8')
+
+    if time_it:
+        # Return timings if requested
+        timings = {
+            "prep_ms": (end_prep - start_prep) * 1000,
+            "hash_ms": (end_hash - start_hash) * 1000,
+            "sign_ms": (end_sign - start_sign) * 1000,
+        }
+        return signature_b64, timings
     
-    return base64.b64encode(signature).decode('utf-8')
+    return signature_b64
+
+def verify_payload(payload, signature_b64):
+    """Verifies a signature against a payload using the server's public key."""
+    if not server_public_key:
+        raise Exception("Server public key is not loaded.")
+    
+    try:
+        payload_string = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+        payload_bytes = payload_string.encode('utf-8')
+        signature_bytes = base64.b64decode(signature_b64)
+        
+        server_public_key.verify(
+            signature_bytes,
+            payload_bytes,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=hashes.SHA256.digest_size
+            ),
+            hashes.SHA256()
+        )
+        return True # Verification successful
+    except InvalidSignature:
+        print("Signature verification FAILED (InvalidSignature)")
+        return False # Verification failed
+    except Exception as e:
+        print(f"Error during verification: {e}")
+        return False
 
 # ============= DATABASE INITIALIZATION (MODIFIED) =============
 
@@ -141,14 +195,50 @@ def init_db():
                 db_conn.conn.commit()
                 print("✓ signature column added successfully")
 
-            # --- FIX FOR BUG 2 ---
-            # Add 'quality_vector' column to transactions table
-            if 'quality_vector' not in trans_columns:
-                print("Adding quality_vector column to transactions table...")
-                cursor.execute("ALTER TABLE transactions ADD COLUMN quality_vector TEXT")
+            # Add quality_vector_json column
+            if 'quality_vector_json' not in trans_columns:
+                print("Adding quality_vector_json column to transactions table...")
+                cursor.execute("ALTER TABLE transactions ADD COLUMN quality_vector_json TEXT")
                 db_conn.conn.commit()
-                print("✓ quality_vector column added successfully")
-            # --- END FIX ---
+                print("✓ quality_vector_json column added successfully")
+            
+            # FIX: Ensure quality column is REAL (float), not TEXT
+            cursor.execute("SELECT typeof(quality) FROM transactions LIMIT 1")
+            result = cursor.fetchone()
+            if result and result[0] == 'text':
+                print("Converting quality column from TEXT to REAL...")
+                cursor.execute("PRAGMA foreign_keys=off")
+                cursor.execute("BEGIN TRANSACTION")
+                
+                # Create new table with correct schema
+                cursor.execute("""
+                    CREATE TABLE transactions_new (
+                        transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        movie_title TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        quality REAL NOT NULL,
+                        quality_vector_json TEXT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        signature TEXT,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    )
+                """)
+                
+                # Copy data, converting quality to float
+                cursor.execute("""
+                    INSERT INTO transactions_new 
+                    SELECT transaction_id, user_id, action, movie_title, provider, 
+                           CAST(quality AS REAL), quality_vector_json, timestamp, signature
+                    FROM transactions
+                """)
+                
+                cursor.execute("DROP TABLE transactions")
+                cursor.execute("ALTER TABLE transactions_new RENAME TO transactions")
+                cursor.execute("COMMIT")
+                cursor.execute("PRAGMA foreign_keys=on")
+                print("✓ Quality column converted to REAL")
 
             # CREATE BILLING TABLE
             cursor.execute("""
@@ -351,7 +441,10 @@ def get_public_key():
 
 @app.route('/api/confirm_service', methods=['POST'])
 def confirm_service():
-    """Receives a payload, signs it, and stores it in the database."""
+    """
+    Receives a payload from the client, signs it with the server's private key,
+    and stores the payload + signature in the database as a non-repudiable log.
+    """
     if 'user_email' not in session:
         return jsonify({"error": "Not authenticated"}), 401
 
@@ -362,18 +455,39 @@ def confirm_service():
         return jsonify({"error": "Payload is required"}), 400
 
     email = session['user_email']
-    print("\n--- [BACKEND LOG] Starting Service Confirmation (Notarization) ---")
+    print("\n" + "="*60)
+    print("🔏 PERFORMANCE TIMING: Digital Signing & Verification")
+    print("="*60)
     print(f"[BACKEND LOG] Request received from user: {email}")
     print(f"[BACKEND LOG] Payload to sign: {payload}")
 
     try:
-        signature_b64 = sign_payload(payload)
+        # --- MODIFIED: Get signature AND timings ---
+        signature_b64, timings = sign_payload(payload, time_it=True)
+        prep_time = timings['prep_ms']
+        hash_time = timings['hash_ms']
+        sign_time = timings['sign_ms']
+        print(f"⏱️  Payload Prep (JSON -> bytes): {prep_time:.2f}ms")
+        print(f"⏱️  Payload Hashing (SHA256): {hash_time:.2f}ms")
+        print(f"⏱️  Digital Signature Creation (RSA-PSS): {sign_time:.2f}ms")
+        print(f"[DEBUG] Signature: {signature_b64[:30]}...")
         
-        print("✅ [BACKEND LOG] Payload signed successfully.")
-        print(f"[DEBUG] Storing Signature: {signature_b64[:30]}...")
+        start_verify = time.time()
+        is_valid = verify_payload(payload, signature_b64)
+        end_verify = time.time()
+        verify_time = (end_verify - start_verify) * 1000
+        
+        if not is_valid:
+            # This should never happen if we just signed it, but it's a good sanity check
+            print("❌ CRITICAL: Self-verification failed!")
+            return jsonify({"error": "Signature self-test failed"}), 500
+        
+        print(f"⏱️  Digital Signature Verification (RSA-PSS): {verify_time:.2f}ms")
+        print("="*60 + "\n")
         
         quality_score = float(payload.get('quality', 0))
         quality_vector = payload.get('quality_vector') 
+        quality_vector = payload.get('quality_vector')
 
         billing_info = calculate_billing(quality_score, quality_vector)
 
@@ -390,22 +504,18 @@ def confirm_service():
                 user_id = session['user_id']
                 cursor = db_conn.cursor
                 
-                # --- FIX FOR BUG 2 ---
-                # Add 'quality_vector' to the INSERT statement
                 cursor.execute(
                     """INSERT INTO transactions 
-                       (user_id, action, movie_title, provider, quality, timestamp, signature, quality_vector) 
-                       VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?)""",
+                       (user_id, action, movie_title, provider, quality, quality_vector_json, timestamp, signature) 
+                       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)""",
                     (user_id, 
                      payload.get('action', 'unknown'),
                      payload.get('movie_title', 'unknown'),
                      payload.get('provider', 'unknown'),
-                     payload.get('quality', 'unknown'),
-                     signature_b64,
-                     json.dumps(quality_vector) if quality_vector else None # Store vector as JSON string
-                    )
+                     quality_score,
+                     json.dumps(quality_vector) if quality_vector else None,
+                     signature_b64)
                 )
-                # --- END FIX ---
 
                 transaction_id = cursor.lastrowid
                 
@@ -432,8 +542,9 @@ def confirm_service():
                 print(f"✓ [BILLING] Billing record created with ID: {billing_id}")
                 
                 session['pending_billing_id'] = billing_id
+                
         except Exception as log_error:
-            print(f"⚠️ [BACKEND LOG] Failed to log transaction: {log_error}")
+            print(f"[BACKEND LOG] Failed to log transaction: {log_error}")
             import traceback
             traceback.print_exc()
             return jsonify({
@@ -445,11 +556,17 @@ def confirm_service():
             "status": "success",
             "message": "Service action confirmed and logged by server.",
             "billing_id": billing_id,
-            "billing_info": billing_info
+            "billing_info": billing_info,
+            "performance": {
+                "payload_prep_ms": round(prep_time, 2),
+                "hashing_ms": round(hash_time, 2),
+                "signing_ms": round(sign_time, 2),
+                "verification_ms": round(verify_time, 2)
+            }
         }), 200
 
     except Exception as e:
-        print(f"❌ [BACKEND LOG] Signing error: {e}")
+        print(f"[BACKEND LOG] Signing error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -479,7 +596,7 @@ def get_history():
             return jsonify(history_list), 200
             
     except Exception as e:
-        print(f"❌ [BACKEND LOG] Error fetching history: {e}")
+        print(f"[BACKEND LOG] Error fetching history: {e}")
         return jsonify({"error": "Could not retrieve history"}), 500
 
 @app.route('/api/get_pending_bill', methods=['GET'])
@@ -578,6 +695,37 @@ def billing_history():
         print(f"Error fetching billing history: {e}")
         return jsonify({"error": str(e)}), 500
     
+@app.route('/api/clear_pending_bill', methods=['POST'])
+def clear_pending_bill():
+    """Clear pending billing when user closes video player without paying."""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    try:
+        with TransactionDatabase("transactions.db") as db_conn:
+            cursor = db_conn.cursor
+            
+            # Delete the most recent pending bill for this user
+            cursor.execute(
+                """DELETE FROM billing 
+                   WHERE billing_id IN (
+                       SELECT billing_id FROM billing 
+                       WHERE user_id = ? AND payment_status = 'pending'
+                       ORDER BY timestamp DESC 
+                       LIMIT 1
+                   )""",
+                (session['user_id'],)
+            )
+            db_conn.conn.commit()
+            
+            session.pop('pending_billing_id', None)
+            
+            print(f"[BILLING] Cleared pending bill for user {session['user_id']}")
+            return jsonify({"status": "success"}), 200
+            
+    except Exception as e:
+        print(f"Error clearing pending bill: {e}")
+        return jsonify({"error": str(e)}), 500
 # ============= HELPER FUNCTIONS =============
 def cosine_similarity(a, b):
     return dot(a, b) / (norm(a) * norm(b))
@@ -648,12 +796,19 @@ def find_relevant_helper(query, intent_vector=None):
         raw_results = json.loads(searcher(query))
         print(f"Request vector: {request_vector}")
         
+        print("\n" + "="*60)
+        print("🔍 PERFORMANCE TIMING: Vector Comparison")
+        print("="*60)
+        
         final_results = []
-        start = time.time()
+        start_total = time.time()
         
         for content in raw_results:
             providers_arranged = []
             for provider_info in raw_results[content]:
+                # Time individual similarity calculation
+                start_sim = time.time()
+                
                 provider_vector = np.array([
                     provider_info['resolution'],
                     provider_info['frame_rate'],
@@ -662,15 +817,22 @@ def find_relevant_helper(query, intent_vector=None):
                     provider_info['buffer_strategy']
                 ])
                 similarity = cosine_similarity(provider_vector, request_vector)
+                
+                end_sim = time.time()
+                sim_time = (end_sim - start_sim) * 1000
+                
                 providers_arranged.append((provider_info['provider'], similarity))
+                print(f"⏱️  Similarity calculation for {provider_info['provider']}: {sim_time:.4f}ms")
             
             providers_arranged = sorted(providers_arranged, key=lambda x: x[1], reverse=True)
             print(f"Providers for {content}: {providers_arranged}")
             
             final_results.append({content: providers_arranged})
         
-        end = time.time()
-        print(f"Processing time: {end-start:.3f} seconds")
+        end_total = time.time()
+        total_time = (end_total - start_total) * 1000
+        print(f"✅ TOTAL VECTOR COMPARISON TIME: {total_time:.2f}ms")
+        print("="*60 + "\n")
         
         return final_results
         
@@ -708,16 +870,52 @@ def chat():
         }), 503
     
     try:
+        print("\n" + "="*60)
+        print("🔍 PERFORMANCE TIMING: Intent Extraction (LLM)")
+        print("="*60)
+        
+        # Time intent extraction (This is your Ollama/LLM call)
+        start_intent = time.time()
         intents = intentExtractor.intent_extractor.extract_intents(user_message)
+        end_intent = time.time()
+        # --- FIX: Corrected variable name ---
+        intent_time = (end_intent - start_intent) * 1000  # Convert to ms
+        
+        # --- MODIFIED: Clarified log message ---
+        print(f"⏱️  LLM/Ollama Response (extract_intents): {intent_time:.2f}ms")
+        
         intents_dict = intents.to_dict(exclude_none=False)
+        
+        # Time intent processing/conversion
+        start_process = time.time()
         processed_intents = intentExtractor.process_and_convert_intents(intents_dict)
+        end_process = time.time()
+        process_time = (end_process - start_process) * 1000
+        
+        print(f"⏱️  Intent Processing (Python): {process_time:.2f}ms")
+        
+        # Time vector creation
+        start_vector = time.time()
         intent_vector = intentExtractor.create_intent_vector(processed_intents)
+        end_vector = time.time()
+        vector_time = (end_vector - start_vector) * 1000
+        
+        print(f"⏱️  Vector Creation (Python): {vector_time:.2f}ms")
+        print(f"✅ TOTAL TIME: {intent_time + process_time + vector_time:.2f}ms")
+        print("="*60 + "\n")
         
         return jsonify({
             "message": user_message,
             "raw_intents": intents_dict,
             "processed_intents": processed_intents,
             "intent_vector": intent_vector,
+            "performance": {
+                # --- MODIFIED: Clarified key name ---
+                "llm_extraction_ms": round(intent_time, 2),
+                "intent_processing_ms": round(process_time, 2),
+                "vector_creation_ms": round(vector_time, 2),
+                "total_ms": round(intent_time + process_time + vector_time, 2)
+            }
         }), 200
     except Exception as e:
         print(f"Error extracting intents: {e}")
@@ -725,7 +923,6 @@ def chat():
             "error": f"Failed to extract intents: {str(e)}",
             "message": user_message
         }), 500
-
 
 @app.route("/fetch", methods=["POST"])
 def fetch():

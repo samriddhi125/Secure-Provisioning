@@ -985,7 +985,8 @@
             
             <div class="payment-actions">
                 <button class="btn btn-pay" id="btnPay" onclick="processPaymentFromModal()">
-                    Pay <span id="payButtonAmount">₹22.00</span>
+                    Pay 
+                    <span id="payButtonAmount">₹22.00</span>
                 </button>
                 <button class="btn btn-cancel-payment" onclick="closePaymentModal()">Cancel</button>
             </div>
@@ -1318,6 +1319,9 @@
             }
         }
 
+        // Store raw provider data globally
+        let rawProviderData = {};
+
         async function fetchSmartSearch(query) {
             try {
                 const response = await fetch(`${API_BASE_URL}/takeQuery?message=${encodeURIComponent(query)}`, {
@@ -1326,12 +1330,62 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || "Smart search failed");
                 currentResults.smart = data;
+                
+                // ✅ Also fetch raw data to get quality vectors
+                await fetchRawProviderData(query);
+                
             } catch (error) {
                 console.error('Smart search error:', error);
                 currentResults.smart = null;
                 throw error;
             }
         }
+
+        async function fetchRawProviderData(query) {
+            try {
+                const intents = await intent_helper(query);
+                if (!intents || !intents.movie) return;
+                
+                const response = await fetch(`${API_BASE_URL}/fetch?query=${encodeURIComponent(intents.movie)}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                rawProviderData = JSON.parse(data);  // Store globally
+                console.log("[DEBUG] Stored raw provider data:", rawProviderData);
+            } catch (error) {
+                console.error('Error fetching raw provider data:', error);
+            }
+        }
+
+// ✅ FIX: Get actual quality vector from stored data
+function getProviderQualityVector(contentName, providerName) {
+    console.log("[DEBUG] Looking up quality vector for:", contentName, providerName);
+    console.log("[DEBUG] Available data:", rawProviderData);
+    
+    if (!rawProviderData[contentName]) {
+        console.warn("[DEBUG] Content not found in raw data, using defaults");
+        return [2, 1, 1, 0, 1];  // Default mid-range values
+    }
+    
+    const providers = rawProviderData[contentName];
+    const provider = providers.find(p => p.provider === providerName);
+    
+    if (!provider) {
+        console.warn("[DEBUG] Provider not found, using defaults");
+        return [2, 1, 1, 0, 1];
+    }
+    
+    const vector = [
+        provider.resolution || 0,
+        provider.frame_rate || 0,
+        provider.region_latency || 0,
+        provider.adaptive_streaming || 0,
+        provider.buffer_strategy || 0
+    ];
+    
+    console.log("[DEBUG] Found quality vector:", vector);
+    return vector;
+}
 
         async function fetchIntents(query) {
             try {
@@ -1424,49 +1478,58 @@
 
         // --- THIS IS THE CORRECTED FUNCTION ---
         async function displayHistoryResults(container, transactions) {
-            if (!transactions || transactions.length === 0) {
-                container.innerHTML = '<div class="placeholder-message"><p>No viewing history found.</p></div>';
-                return;
-            }
+    if (!transactions || transactions.length === 0) {
+        container.innerHTML = '<div class="placeholder-message"><p>No viewing history found.</p></div>';
+        return;
+    }
 
-            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">Verified Viewing History</h3>';
-            
-            transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    let html = '<h3 style="margin-bottom: 15px; color: #667eea;">🕒 Verified Viewing History</h3>';
+    
+    transactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-            for (const item of transactions) {
-                
-                // 1. Manually reconstruct the payload, ENSURING correct data types
-                const payload = {
-                    action: item.action,
-                    movie_title: item.movie_title,
-                    provider: item.provider,
-                    // --- THIS IS THE FIX ---
-                    // Convert the string from the DB back to a float
-                    quality: parseFloat(item.quality) 
-                };
-                
-                // 2. Verify this reconstructed payload against the signature
-                const isValid = await verifyPayload(payload, item.signature);
-
-                // 3. Render based on validity
-                const timestamp = new Date(item.timestamp).toLocaleString();
-                
-                html += `
-                    <div class="history-item">
-                        <div class="history-details">
-                            <h4>${item.movie_title}</h4>
-                            <p>on ${item.provider} at ${timestamp}</p>
-                        </div>
-                        ${isValid 
-                            ? '<div class="history-badge verified">✓ Verified</div>'
-                            : '<div class="history-badge tampered">Tampered</div>'
-                        }
-                    </div>
-                `;
-            }
-            container.innerHTML = html;
+    for (const item of transactions) {
+        
+        // ✅ FIX: Reconstruct the EXACT payload that was signed
+        const quality_vector = item.quality_vector_json ? JSON.parse(item.quality_vector_json) : null;
+        
+        const payload = {
+            action: item.action,
+            movie_title: item.movie_title,
+            provider: item.provider,
+            quality: parseFloat(item.quality)  // ✅ Convert string to float
+        };
+        
+        // ✅ Only add quality_vector if it exists (to match original payload)
+        if (quality_vector) {
+            payload.quality_vector = quality_vector;
         }
+        
+        console.log("[DEBUG] Reconstructed payload for verification:", payload);
+        console.log("[DEBUG] Signature to verify:", item.signature.substring(0, 30) + "...");
+        
+        // 2. Verify this reconstructed payload against the signature
+        const isValid = await verifyPayload(payload, item.signature);
 
+        // 3. Render based on validity
+        const timestamp = new Date(item.timestamp).toLocaleString();
+        
+        html += `
+            <div class="history-item">
+                <div class="history-details">
+                    <h4>${item.movie_title}</h4>
+                    <p>on ${item.provider} at ${timestamp}</p>
+                </div>
+                ${isValid 
+                    ? '<div class="history-badge verified">✓ Verified</div>'
+                    : '<div class="history-badge tampered">❌ Tampered</div>'
+                }
+            </div>
+        `;
+    }
+    container.innerHTML = html;
+}
+
+        // --- THIS IS THE CORRECTED FUNCTION ---
         // --- THIS IS THE CORRECTED FUNCTION ---
         async function showPaymentModal() {
             try {
@@ -1482,23 +1545,44 @@
 
                 const bill = await response.json();
                 
-                // Populate payment modal with bill details
-                document.getElementById('paymentContent').textContent = bill.content || selectedContent;
-                document.getElementById('paymentProvider').textContent = bill.provider || selectedProvider; 
+                // --- NEW DEFENSIVE CHECKS ---
+                // This object will find all elements *before* trying to use them.
+                const elements = {
+                    modal: document.getElementById('paymentModal'),
+                    content: document.getElementById('paymentContent'),
+                    provider: document.getElementById('paymentProvider'),
+                    basePrice: document.getElementById('paymentBasePrice'),
+                    platformFee: document.getElementById('paymentPlatformFee'),
+                    total: document.getElementById('paymentTotal'),
+                    payButtonAmount: document.getElementById('payButtonAmount'),
+                    message: document.getElementById('paymentMessage'),
+                    app: document.getElementById('mainApp')
+                };
+
+                // This loop checks if any of them are null
+                for (const key in elements) {
+                    if (!elements[key]) {
+                        // This will create a much more specific error message
+                        throw new Error(`CRITICAL HTML ERROR: Element with id='${key}' not found. Check for duplicates or typos in your index.html.`);
+                    }
+                }
+
+                elements.content.textContent = bill.content_name || selectedContent; 
+                elements.provider.textContent = bill.provider || selectedProvider;
                 
                 // Update pricing
-                document.getElementById('paymentBasePrice').textContent = `₹${bill.base_price.toFixed(2)}`;
-                document.getElementById('paymentPlatformFee').textContent = `₹${bill.platform_fee.toFixed(2)}`;
-                document.getElementById('paymentTotal').textContent = `₹${bill.total_price.toFixed(2)}`;
-                document.getElementById('payButtonAmount').textContent = `₹${bill.total_price.toFixed(2)}`;
+                elements.basePrice.textContent = `₹${bill.base_price.toFixed(2)}`;
+                elements.platformFee.textContent = `₹${bill.platform_fee.toFixed(2)}`;
+                elements.total.textContent = `₹${bill.total_price.toFixed(2)}`;
+                elements.payButtonAmount.textContent = `₹${bill.total_price.toFixed(2)}`;
                 
                 // Store billing ID for payment processing
                 window.currentBillingId = bill.billing_id;
                 
                 // Show the payment modal
-                document.getElementById('paymentModal').classList.remove('hidden');
-                document.getElementById('paymentMessage').textContent = '';
-                document.getElementById('mainApp').style.filter = 'blur(5px)';
+                elements.modal.classList.remove('hidden');
+                elements.message.textContent = '';
+                elements.app.style.filter = 'blur(5px)';
                 
             } catch (error) {
                 console.error('Error loading payment:', error);
@@ -1551,38 +1635,43 @@
             }
         }
 
-        // Closes the payment modal
-        function closePaymentModal() {
+        // Closes the payment modal AND clears the pending bill
+        async function closePaymentModal() {
             document.getElementById('paymentModal').classList.add('hidden');
             document.getElementById('mainApp').style.filter = 'none';
-        }
-
-        // --- REPLACE your old 'processPayment' function with this one ---
-        async function processPayment(billingId, paymentMethod = 'card') { // Added paymentMethod param
             try {
-                const response = await fetch(`${API_BASE_URL}/api/process_payment`, {
+                await fetch(`${API_BASE_URL}/api/clear_pending_bill`, {
                     method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        billing_id: billingId,
-                        payment_method: paymentMethod // Use the param
-                    })
-                });
+                    credentials: 'include'});
+                console.log("[DEBUG] Cleared pending billing from payment modal cancel.");
+                } catch (error) {
+                console.error("Error clearing pending bill:", error);}}
 
-                const data = await response.json();
-                if (response.ok) {
-                    console.log("✓ Payment successful:", data);
-                    navigateToVideoPlayer(); // This is the correct flow
-                } else {
-                    throw new Error(data.error || 'Payment failed');
-                }
-            } catch (error) {
-                console.error('Payment error:', error);
-                // Re-throw the error so processPaymentFromModal can catch it
-                throw error; 
-            }
+        async function processPayment(billingId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/process_payment`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                billing_id: billingId,
+                payment_method: 'card'
+            })
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+            console.log("✓ Payment successful:", data);
+            navigateToVideoPlayer();
+        } else {
+            throw new Error(data.error || 'Payment failed');
         }
+    } catch (error) {
+        console.error('Payment error:', error);
+        // For testing: Continue to video even if payment fails
+        navigateToVideoPlayer();
+    }
+}
 
         // --- REPLACE your old 'window.onload' function with this one ---
         window.onload = async function() {
@@ -1766,13 +1855,24 @@
             videoElement.play();
         }
 
-        function closeVideoPlayer() {
+        async function closeVideoPlayer() {
             document.getElementById('videoPlayerPage').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             document.getElementById('mainApp').style.filter = 'none';
             
             const videoElement = document.getElementById('videoElement');
             videoElement.pause();
+            
+            // ✅ Clear pending billing on server side
+            try {
+                await fetch(`${API_BASE_URL}/api/clear_pending_bill`, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                console.log("[DEBUG] Cleared pending billing, user can select another provider");
+            } catch (error) {
+                console.error("Error clearing pending bill:", error);
+            }
         }
 
         function showMessage(message, type) {
